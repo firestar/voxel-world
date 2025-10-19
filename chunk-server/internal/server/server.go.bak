@@ -135,7 +135,6 @@ func (s *Server) Run(ctx context.Context) error {
 		case <-entityTicker.C:
 			s.flushDirtyEntities()
 			s.flushVoxelDeltas()
-			s.processMigrationQueue()
 		case <-stateTicker.C:
 			s.broadcastChunkSummaries(ctx)
 		case <-discoveryC:
@@ -241,6 +240,7 @@ func (s *Server) updateEntityChunk(ent *entities.Entity) {
 	pos := ent.PositionVec()
 	blockX := int(math.Floor(pos.X))
 	blockY := int(math.Floor(pos.Y))
+	blockZ := int(math.Floor(pos.Z))
 	chunkCoord := world.ChunkCoord{
 		X: floorDiv(blockX, region.ChunkDimension.Width),
 		Y: floorDiv(blockY, region.ChunkDimension.Depth),
@@ -280,7 +280,6 @@ func (s *Server) queueMigration(ent *entities.Entity, targetChunk world.ChunkCoo
 
 	ent.SetAttribute("migration_pending", 1)
 	req := migration.Request{
-		EntityID:       ent.ID,
 		EntitySnapshot: ent.Snapshot(),
 		TargetChunk:    targetChunk,
 		TargetServer:   info.serverID,
@@ -298,16 +297,11 @@ func (s *Server) processMigrationQueue() {
 	}
 	batch := s.migrationQueue.Drain(8)
 	for _, req := range batch {
-		if _, exists := s.inFlightTransfers[req.EntityID]; exists {
-			continue
-		}
-		if ent, ok := s.entities.Entity(req.EntityID); ok {
-			req.EntitySnapshot = ent.Snapshot()
-		} else {
+		if _, exists := s.inFlightTransfers[req.EntitySnapshot.ID]; exists {
 			continue
 		}
 		if err := s.sendMigrationRequest(req); err != nil {
-			s.logger.Printf("migration: send request for entity %s failed: %v", req.EntityID, err)
+			s.logger.Printf("migration: send request for entity %s failed: %v", req.EntitySnapshot.ID, err)
 			s.migrationQueue.Enqueue(req)
 		}
 	}
@@ -324,7 +318,7 @@ func (s *Server) sendMigrationRequest(req migration.Request) error {
 	state.Attributes["migration_pending"] = 1
 	nonce := s.nextTransferNonce()
 	msg := network.TransferRequest{
-		EntityID:     string(req.EntityID),
+		EntityID:     string(req.EntitySnapshot.ID),
 		FromServer:   s.cfg.Server.ID,
 		ToServer:     req.TargetServer,
 		GlobalChunkX: req.TargetChunk.X,
@@ -338,7 +332,7 @@ func (s *Server) sendMigrationRequest(req migration.Request) error {
 		return err
 	}
 	req.Nonce = nonce
-	s.inFlightTransfers[req.EntityID] = req
+	s.inFlightTransfers[req.EntitySnapshot.ID] = req
 	return nil
 }
 
@@ -660,28 +654,6 @@ func (s *Server) onTransferAck(ctx context.Context, addr *net.UDPAddr, env netwo
 		return
 	}
 	s.logger.Printf("transfer ack entity %s accepted=%t from %s msg=%s", ack.EntityID, ack.Accepted, ack.FromServer, ack.Message)
-	id := entities.ID(ack.EntityID)
-	req, ok := s.inFlightTransfers[id]
-	if !ok {
-		return
-	}
-	delete(s.inFlightTransfers, id)
-
-	if ack.Accepted {
-		s.entities.Remove(id)
-		delete(s.dirtyEntities, id)
-		s.logger.Printf("migration: entity %s transferred to %s", ack.EntityID, ack.FromServer)
-		return
-	}
-
-	if ent, ok := s.entities.Entity(id); ok {
-		ent.SetAttribute("migration_pending", 0)
-		s.recordDirtyEntity(ent)
-		req.EntitySnapshot = ent.Snapshot()
-		req.QueuedAt = time.Now()
-		req.Nonce = 0
-		s.migrationQueue.Enqueue(req)
-	}
 }
 
 func (s *Server) handleTransferRequest(req network.TransferRequest) network.TransferAck {
@@ -692,79 +664,15 @@ func (s *Server) handleTransferRequest(req network.TransferRequest) network.Tran
 		Nonce:      req.Nonce,
 		Timestamp:  time.Now().UTC(),
 	}
-	targetChunk := world.ChunkCoord{X: req.GlobalChunkX, Y: req.GlobalChunkY}
-	region := s.world.Region()
-	if !region.ContainsGlobalChunk(targetChunk) {
+	if req.ToServer != "" && req.ToServer != s.cfg.Server.ID {
 		ack.Accepted = false
-		ack.Message = "chunk outside region"
+		ack.Message = "incorrect destination server"
 		return ack
 	}
-	if req.State.ID == "" {
-		ack.Accepted = false
-		ack.Message = "missing entity id"
-		return ack
-	}
-	ent, err := s.buildEntityFromState(req.State, targetChunk)
-	if err != nil {
-		ack.Accepted = false
-		ack.Message = err.Error()
-		return ack
-	}
-	if err := s.entities.Add(ent); err != nil {
-		ack.Accepted = false
-		ack.Message = err.Error()
-		return ack
-	}
-	ent.SetAttribute("migration_pending", 0)
-	s.recordDirtyEntity(ent)
 	ack.Accepted = true
 	ack.Message = "accepted"
-	s.logger.Printf("migration: entity %s received from %s", req.EntityID, req.FromServer)
+	s.logger.Printf("transfer request entity %s from %s targeting chunk(%d,%d) reason=%s", req.EntityID, req.FromServer, req.GlobalChunkX, req.GlobalChunkY, req.Reason)
 	return ack
-}
-
-func (s *Server) buildEntityFromState(state network.EntityState, targetChunk world.ChunkCoord) (*entities.Entity, error) {
-	pos := vec3FromSlice(state.Position)
-	vel := vec3FromSlice(state.Velocity)
-	ent := &entities.Entity{
-		ID:   entities.ID(state.ID),
-		Kind: entities.Kind(state.Kind),
-		Chunk: entities.ChunkMembership{
-			ServerID: s.cfg.Server.ID,
-			Chunk:    targetChunk,
-		},
-		Position: pos,
-		Velocity: vel,
-		Stats: entities.Stats{
-			MaxHP:     state.MaxHP,
-			CurrentHP: state.HP,
-		},
-		Capabilities: entities.Capabilities{
-			CanFly: state.CanFly,
-			CanDig: state.CanDig,
-		},
-		Attributes: make(map[string]float64),
-		LastTick:  time.Now(),
-	}
-	for k, v := range state.Attributes {
-		ent.Attributes[k] = v
-	}
-	ent.UpdateChunk(s.cfg.Server.ID, targetChunk)
-	return ent, nil
-}
-
-func vec3FromSlice(values []float64) entities.Vec3 {
-	vec := entities.Vec3{}
-	if len(values) > 0 {
-		vec.X = values[0]
-	}
-	if len(values) > 1 {
-		vec.Y = values[1]
-	}
-	if len(values) > 2 {
-		vec.Z = values[2]
-	}
-	return vec
 }
 
 func (s *Server) onEntityQuery(ctx context.Context, addr *net.UDPAddr, env network.Envelope) {
@@ -840,7 +748,7 @@ func (s *Server) announceToMainServers() {
 }
 
 func serializeEntity(ent entities.Entity) network.EntityState {
-	state := network.EntityState{
+	return network.EntityState{
 		ID:       string(ent.ID),
 		Kind:     string(ent.Kind),
 		ChunkX:   ent.Chunk.Chunk.X,
@@ -852,16 +760,9 @@ func serializeEntity(ent entities.Entity) network.EntityState {
 		CanFly:   ent.Capabilities.CanFly,
 		CanDig:   ent.Capabilities.CanDig,
 		Voxels:   len(ent.Blocks),
+		Dirty:    ent.Dirty,
+		Dying:    ent.Dying,
 	}
-	if len(ent.Attributes) > 0 {
-		state.Attributes = make(map[string]float64, len(ent.Attributes))
-		for k, v := range ent.Attributes {
-			state.Attributes[k] = v
-		}
-	}
-	state.Dirty = ent.Dirty
-	state.Dying = ent.Dying
-	return state
 }
 
 func chunkBlockCount(chunk *world.Chunk) int {
@@ -873,21 +774,6 @@ func chunkBlockCount(chunk *world.Chunk) int {
 		return true
 	})
 	return count
-}
-
-func (s *Server) nextTransferNonce() uint64 {
-	s.transferSeq++
-	return s.transferSeq
-}
-
-func floorDiv(value, size int) int {
-	if size <= 0 {
-		return 0
-	}
-	if value >= 0 {
-		return value / size
-	}
-	return -((-value - 1) / size) - 1
 }
 
 

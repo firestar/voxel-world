@@ -87,6 +87,10 @@ chunk_servers:
 
 Clients can query `GET /lookup?x=<blockX>&y=<blockY>` on the central service to discover the appropriate chunk server endpoint for a given world coordinate.
 
+### Entity Migration
+
+Chunk servers automatically queue entity migrations when units cross server boundaries. Once a neighbor handshake completes, the owning server serialises the entity state and issues a `transferRequest` to the adjacent chunk server. The receiving server reconstructs the entity, acknowledges the move, and the local server removes the migrated unit after a successful ack. Entities tagged with `migration_pending` pause simulation until the transfer completes or is retried.
+
 ## Sample Configuration
 
 ```json
@@ -123,6 +127,6 @@ All duration values are parsed via Go's duration syntax (e.g. `"250ms"`, `"1s"`)
 ## Next Steps
 
 - Add rate limiting/backpressure so voxel delta bursts don't overwhelm downstream consumers.
-- Implement unit/voxel migration queues that leverage the neighbor handshake to move entities across servers.
+- Implement chunk streaming optimisations so arriving players receive neighbour chunk data eagerly.
 - Expand pathfinding to operate on block-level nodes with traversal constraints per unit type.
 - Integrate persistence (snapshot + replay) and a test harness for voxel updates.

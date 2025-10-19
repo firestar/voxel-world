@@ -17,12 +17,14 @@ const (
 )
 
 type Request struct {
+	EntityID       entities.ID
 	EntitySnapshot entities.Entity
 	TargetChunk    world.ChunkCoord
 	TargetServer   string
 	TargetEndpoint string
 	QueuedAt       time.Time
 	Reason         string
+	Nonce          uint64
 }
 
 type Result struct {
