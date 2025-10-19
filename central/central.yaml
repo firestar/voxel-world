@@ -1,0 +1,39 @@
+listen_address: 0.0.0.0
+http_port: 28080
+world:
+  chunk_width: 512
+  chunk_depth: 512
+  chunk_height: 2048
+cluster:
+  default_binary: ../chunk-server/cmd/chunkserver/chunkserver
+  data_root: ./data
+  env:
+    CHUNK_LOG_LEVEL: INFO
+chunk_servers:
+  - id: chunk-east-0
+    global_origin:
+      chunk_x: 0
+      chunk_y: 0
+    chunk_span:
+      chunks_x: 32
+      chunks_y: 32
+    args:
+      - "--config"
+      - "configs/chunk-east.json"
+    listen_address: 127.0.0.1:19000
+    http_address: http://127.0.0.1:19001
+  - id: chunk-west-0
+    global_origin:
+      chunk_x: 32
+      chunk_y: 0
+    chunk_span:
+      chunks_x: 32
+      chunks_y: 32
+    args:
+      - "--config"
+      - "configs/chunk-west.json"
+    listen_address: 127.0.0.1:19100
+    http_address: http://127.0.0.1:19101
+player_api:
+  enabled: true
+  base_url: https://api.example.com
