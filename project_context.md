@@ -14,6 +14,7 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 
 - Entity migration queues leverage neighbor handshakes to transfer entity state between servers; failed transfers are retried.
 - Pathfinding responds to UDP `pathRequest` messages (see `cmd/pathclient`).
+- Pathfinding now evaluates routes at the block level with unit-specific traversal profiles (ground, flying, underground) that enforce clearance, climb, and drop limits.
 - Central orchestrator configuration and README describe multi-server setups and lookup endpoints.
 - Chunk servers prefetch chunk summaries for the entered chunk and its adjacent neighbors when entities cross chunk boundaries, reducing client hitching when players explore new regions.
 - README documentation references orchestrator usage and notes that `project_context.md` must be kept current.
@@ -35,7 +36,7 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 - `chunk-server/internal/network/protocol.go`: UDP protocol definitions (envelopes, message types, payload structs).
 - `chunk-server/internal/network/protocol.go.bak`: Backup of a prior protocol definition for reference.
 - `chunk-server/internal/network/server.go`: UDP server abstraction for registering handlers and sending messages.
-- `chunk-server/internal/pathfinding/navigator.go`: Chunk-level A* navigator for routing across chunk grids.
+- `chunk-server/internal/pathfinding/navigator.go`: Block-level A* navigator that enforces unit traversal constraints.
 - `chunk-server/internal/server/delta.go`: Accumulator for coalescing voxel deltas before streaming.
 - `chunk-server/internal/server/neighbor.go`: Neighbor management (handshakes, adjacency tracking, endpoints).
 - `chunk-server/internal/server/server.go`: Core chunk server loop (ticks, migrations, streaming, request handlers).
@@ -60,7 +61,7 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 ## Next Steps (excerpt)
 
 - Add rate limiting/backpressure so voxel/ entity streaming does not overwhelm main servers.
-- Expand pathfinding to operate on block-level nodes with traversal constraints per unit type.
+- Profile block-level pathfinding heuristics and caching behaviour under heavy load.
 - Integrate persistence (snapshot + replay) and a test harness for voxel updates.
 
 ## Maintenance Note

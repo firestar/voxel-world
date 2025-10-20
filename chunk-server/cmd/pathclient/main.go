@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"time"
 
 	"chunkserver/internal/network"
@@ -16,24 +15,28 @@ func main() {
 	server := flag.String("server", "127.0.0.1:19000", "chunk server UDP address")
 	fromX := flag.Int("fromx", 0, "start block X")
 	fromY := flag.Int("fromy", 0, "start block Y")
+	fromZ := flag.Int("fromz", 0, "start block Z")
 	toX := flag.Int("tox", 0, "end block X")
 	toY := flag.Int("toy", 0, "end block Y")
-	chunkW := flag.Int("chunkw", 512, "chunk width in blocks")
-	chunkD := flag.Int("chunkd", 512, "chunk depth in blocks")
+	toZ := flag.Int("toz", 0, "end block Z")
+	mode := flag.String("mode", "ground", "traversal mode (ground|flying|underground)")
+	clearance := flag.Int("clearance", 0, "required vertical clearance in blocks (0 uses server default)")
+	maxClimb := flag.Int("maxclimb", 0, "maximum upward climb per step (0 uses server default)")
+	maxDrop := flag.Int("maxdrop", 0, "maximum downward drop per step (0 uses server default)")
 	flag.Parse()
 
-	fromChunkX := floorDiv(*fromX, *chunkW)
-	fromChunkY := floorDiv(*fromY, *chunkD)
-	toChunkX := floorDiv(*toX, *chunkW)
-	toChunkY := floorDiv(*toY, *chunkD)
-
 	req := network.PathRequest{
-		EntityID: "client-test",
-		FromX:    fromChunkX,
-		FromY:    fromChunkY,
-		ToX:      toChunkX,
-		ToY:      toChunkY,
-		Mode:     "ground",
+		EntityID:  "client-test",
+		FromX:     *fromX,
+		FromY:     *fromY,
+		FromZ:     *fromZ,
+		ToX:       *toX,
+		ToY:       *toY,
+		ToZ:       *toZ,
+		Mode:      *mode,
+		Clearance: *clearance,
+		MaxClimb:  *maxClimb,
+		MaxDrop:   *maxDrop,
 	}
 	payload, _ := json.Marshal(req)
 	env := network.Envelope{
@@ -79,18 +82,8 @@ func main() {
 	if err := json.Unmarshal(envResp.Payload, &resp); err != nil {
 		log.Fatalf("decode payload: %v", err)
 	}
-	fmt.Printf("Route for %s (chunks):\n", resp.EntityID)
+	fmt.Printf("Route for %s (blocks):\n", resp.EntityID)
 	for i, step := range resp.Route {
-		fmt.Printf(" %d: (%d,%d)\n", i, step.X, step.Y)
+		fmt.Printf(" %d: (%d,%d,%d)\n", i, step.X, step.Y, step.Z)
 	}
-}
-
-func floorDiv(value, size int) int {
-	if size <= 0 {
-		return 0
-	}
-	if value >= 0 {
-		return value / size
-	}
-	return -((-value - 1) / size) - 1
 }

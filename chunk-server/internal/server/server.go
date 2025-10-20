@@ -22,7 +22,7 @@ type Server struct {
 	cfg       *config.Config
 	world     *world.Manager
 	entities  *entities.Manager
-	navigator *pathfinding.ChunkNavigator
+	navigator *pathfinding.BlockNavigator
 	net       *network.Server
 	logger    *log.Logger
 
@@ -61,7 +61,7 @@ func New(cfg *config.Config) (*Server, error) {
 	worldManager := world.NewManager(region, terrainGen)
 
 	entityManager := entities.NewManager(cfg.Server.ID)
-	navigator := pathfinding.NewChunkNavigator(region)
+	navigator := pathfinding.NewBlockNavigator(region, worldManager)
 
 	srv := &Server{
 		cfg:               cfg,
@@ -830,19 +830,28 @@ func (s *Server) onPathRequest(ctx context.Context, addr *net.UDPAddr, env netwo
 		return
 	}
 
-	route := s.navigator.FindRoute(
-		world.ChunkCoord{X: req.FromX, Y: req.FromY},
-		world.ChunkCoord{X: req.ToX, Y: req.ToY},
-	)
+	mode := pathfinding.ModeFromString(req.Mode)
+	profile := pathfinding.DefaultProfile(mode)
+	if req.Clearance > 0 {
+		profile.Clearance = req.Clearance
+	}
+	if req.MaxClimb > 0 {
+		profile.MaxClimb = req.MaxClimb
+	}
+	if req.MaxDrop > 0 {
+		profile.MaxDrop = req.MaxDrop
+	}
+
+	start := world.BlockCoord{X: req.FromX, Y: req.FromY, Z: req.FromZ}
+	goal := world.BlockCoord{X: req.ToX, Y: req.ToY, Z: req.ToZ}
+
+	route := s.navigator.FindRoute(ctx, start, goal, profile)
 
 	resp := network.PathResponse{
 		EntityID: req.EntityID,
 	}
 	for _, coord := range route {
-		resp.Route = append(resp.Route, struct {
-			X int `json:"x"`
-			Y int `json:"y"`
-		}{X: coord.X, Y: coord.Y})
+		resp.Route = append(resp.Route, network.BlockStep{X: coord.X, Y: coord.Y, Z: coord.Z})
 	}
 
 	if err := s.net.Send(addr.String(), network.MessagePathResponse, resp); err != nil {
