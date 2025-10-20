@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"sync"
 	"time"
 
 	"chunkserver/internal/config"
@@ -26,6 +27,8 @@ type Server struct {
 	net       *network.Server
 	logger    *log.Logger
 
+	movementWorkers int
+
 	chunkCursor       world.LocalChunkIndex
 	streamSeq         uint64
 	dirtyEntities     map[entities.ID]entities.Entity
@@ -38,6 +41,8 @@ type Server struct {
 	migrationQueue    *migration.Queue
 	inFlightTransfers map[entities.ID]migration.Request
 	transferSeq       uint64
+
+	dirtyMu sync.Mutex
 }
 
 const (
@@ -63,6 +68,11 @@ func New(cfg *config.Config) (*Server, error) {
 	entityManager := entities.NewManager(cfg.Server.ID)
 	navigator := pathfinding.NewBlockNavigator(region, worldManager)
 
+	workers := cfg.Entities.MovementWorkers
+	if workers <= 0 {
+		workers = 1
+	}
+
 	srv := &Server{
 		cfg:               cfg,
 		world:             worldManager,
@@ -70,6 +80,7 @@ func New(cfg *config.Config) (*Server, error) {
 		navigator:         navigator,
 		net:               netSrv,
 		logger:            logger,
+		movementWorkers:   workers,
 		dirtyEntities:     make(map[entities.ID]entities.Entity),
 		dirtyChunks:       make(map[world.ChunkCoord]struct{}),
 		deltaBuffer:       newDeltaAccumulator(),
@@ -95,7 +106,6 @@ func (s *Server) Run(ctx context.Context) error {
 	defer s.net.Close()
 
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	go func() {
 		if err := s.net.Serve(ctx); err != nil && ctx.Err() == nil {
@@ -106,8 +116,12 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.announceToMainServers()
 
-	tickTicker := time.NewTicker(s.cfg.Server.TickRate)
-	defer tickTicker.Stop()
+	movement := newMovementEngine(s, s.cfg.Server.TickRate, s.movementWorkers)
+	movement.Start(ctx)
+	defer func() {
+		cancel()
+		movement.Wait()
+	}()
 
 	stateTicker := time.NewTicker(s.cfg.Server.StateStreamRate)
 	defer stateTicker.Stop()
@@ -131,8 +145,6 @@ func (s *Server) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-tickTicker.C:
-			s.tickEntities(s.cfg.Server.TickRate)
 		case <-entityTicker.C:
 			s.flushDirtyEntities()
 			s.flushVoxelDeltas()
@@ -145,7 +157,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Server) tickEntities(delta time.Duration) {
+func (s *Server) tickEntities(delta time.Duration, workers int) {
 	physics := entities.PhysicsParams{
 		Gravity:         9.8,
 		AirDrag:         0.4,
@@ -154,7 +166,7 @@ func (s *Server) tickEntities(delta time.Duration) {
 		SupportsGravity: true,
 	}
 
-	dirty := s.entities.Apply(func(ent *entities.Entity) {
+	dirty := s.entities.ApplyConcurrent(workers, func(ent *entities.Entity) {
 		switch ent.Kind {
 		case entities.KindProjectile:
 			s.tickProjectile(ent, delta, physics)
@@ -389,21 +401,25 @@ func (s *Server) recordDirtyEntities(list []entities.Entity) {
 	if len(list) == 0 {
 		return
 	}
+	s.dirtyMu.Lock()
 	if s.dirtyEntities == nil {
 		s.dirtyEntities = make(map[entities.ID]entities.Entity)
 	}
 	for _, ent := range list {
 		s.dirtyEntities[ent.ID] = ent
 	}
+	s.dirtyMu.Unlock()
 }
 
 func (s *Server) recordDirtyEntity(ent *entities.Entity) {
+	s.dirtyMu.Lock()
 	if s.dirtyEntities == nil {
 		s.dirtyEntities = make(map[entities.ID]entities.Entity)
 	}
 	snapshot := ent.Snapshot()
 	s.dirtyEntities[ent.ID] = snapshot
 	ent.MarkClean()
+	s.dirtyMu.Unlock()
 }
 
 func (s *Server) damageEntitiesFromCollapses(summary *world.DamageSummary) {
@@ -541,8 +557,10 @@ func (s *Server) flushVoxelDeltas() {
 }
 
 func (s *Server) flushDirtyEntities() {
+	s.dirtyMu.Lock()
 	size := len(s.dirtyEntities)
 	if size == 0 {
+		s.dirtyMu.Unlock()
 		return
 	}
 
@@ -552,6 +570,7 @@ func (s *Server) flushDirtyEntities() {
 	}
 
 	s.dirtyEntities = make(map[entities.ID]entities.Entity, size)
+	s.dirtyMu.Unlock()
 	s.streamEntities(list)
 }
 
