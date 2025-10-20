@@ -1,0 +1,268 @@
+package pathfinding
+
+import (
+	"context"
+	"testing"
+
+	"chunkserver/internal/world"
+)
+
+type stubGenerator struct {
+	chunks map[world.ChunkCoord]*world.Chunk
+}
+
+func newStubGenerator() *stubGenerator {
+	return &stubGenerator{chunks: make(map[world.ChunkCoord]*world.Chunk)}
+}
+
+func (g *stubGenerator) setChunk(coord world.ChunkCoord, chunk *world.Chunk) {
+	g.chunks[coord] = chunk
+}
+
+func (g *stubGenerator) Generate(ctx context.Context, coord world.ChunkCoord, bounds world.Bounds, dim world.Dimensions) (*world.Chunk, error) {
+	if chunk, ok := g.chunks[coord]; ok {
+		return chunk, nil
+	}
+	chunk := world.NewChunk(coord, bounds, dim)
+	g.chunks[coord] = chunk
+	return chunk, nil
+}
+
+func newTestNavigator(t *testing.T, dims world.Dimensions) (*BlockNavigator, *world.Chunk) {
+	t.Helper()
+
+	region := world.ServerRegion{
+		Origin:         world.ChunkCoord{X: 0, Y: 0},
+		ChunksPerAxis:  1,
+		ChunkDimension: dims,
+	}
+
+	chunkCoord := world.ChunkCoord{X: 0, Y: 0}
+	bounds := world.Bounds{
+		Min: world.BlockCoord{X: 0, Y: 0, Z: 0},
+		Max: world.BlockCoord{X: dims.Width - 1, Y: dims.Depth - 1, Z: dims.Height - 1},
+	}
+
+	chunk := world.NewChunk(chunkCoord, bounds, dims)
+
+	generator := newStubGenerator()
+	generator.setChunk(chunkCoord, chunk)
+
+	manager := world.NewManager(region, generator)
+	navigator := NewBlockNavigator(region, manager)
+
+	return navigator, chunk
+}
+
+func addFloor(chunk *world.Chunk, height int) {
+	for x := 0; x < chunk.Dimensions().Width; x++ {
+		for y := 0; y < chunk.Dimensions().Depth; y++ {
+			chunk.SetLocalBlock(x, y, height, world.Block{Type: world.BlockSolid})
+		}
+	}
+}
+
+func surroundWithWalls(chunk *world.Chunk, height int) {
+	dims := chunk.Dimensions()
+	for x := 0; x < dims.Width; x++ {
+		for z := 0; z <= height; z++ {
+			chunk.SetLocalBlock(x, 0, z, world.Block{Type: world.BlockSolid})
+			chunk.SetLocalBlock(x, dims.Depth-1, z, world.Block{Type: world.BlockSolid})
+		}
+	}
+	for y := 0; y < dims.Depth; y++ {
+		for z := 0; z <= height; z++ {
+			chunk.SetLocalBlock(0, y, z, world.Block{Type: world.BlockSolid})
+			chunk.SetLocalBlock(dims.Width-1, y, z, world.Block{Type: world.BlockSolid})
+		}
+	}
+}
+
+func TestBlockNavigatorGroundRouteAvoidsObstacles(t *testing.T) {
+	dims := world.Dimensions{Width: 6, Depth: 6, Height: 6}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Place a pillar that should force a detour around (1,1,1).
+	chunk.SetLocalBlock(1, 1, 1, world.Block{Type: world.BlockSolid})
+	chunk.SetLocalBlock(1, 1, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 1, Z: 1}
+	goal := world.BlockCoord{X: 4, Y: 1, Z: 1}
+
+	path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if len(path) == 0 {
+		t.Fatalf("expected path to be found, got none")
+	}
+	if path[0] != start {
+		t.Fatalf("path should start at %v, got %v", start, path[0])
+	}
+	if path[len(path)-1] != goal {
+		t.Fatalf("path should end at %v, got %v", goal, path[len(path)-1])
+	}
+
+	for _, step := range path {
+		if step == (world.BlockCoord{X: 1, Y: 1, Z: 1}) {
+			t.Fatalf("path traversed blocked coordinate %v", step)
+		}
+	}
+
+	detour := false
+	for _, step := range path {
+		if step.Y == 2 { // requires lateral move to go around the pillar
+			detour = true
+			break
+		}
+	}
+	if !detour {
+		t.Fatalf("expected path to detour around obstacle, got %v", path)
+	}
+}
+
+func TestBlockNavigatorGroundRouteRespectsClimbLimit(t *testing.T) {
+	dims := world.Dimensions{Width: 3, Depth: 3, Height: 6}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Create a platform two blocks higher than the start.
+	chunk.SetLocalBlock(1, 1, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 1, Z: 1}
+	goal := world.BlockCoord{X: 1, Y: 1, Z: 3}
+
+	path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if path != nil {
+		t.Fatalf("expected no path due to climb limit, got %v", path)
+	}
+}
+
+func TestBlockNavigatorGroundRouteRespectsDropLimit(t *testing.T) {
+	dims := world.Dimensions{Width: 2, Depth: 2, Height: 6}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Support the starting position at Z=4.
+	chunk.SetLocalBlock(0, 0, 3, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 0, Z: 4}
+	goal := world.BlockCoord{X: 1, Y: 0, Z: 1}
+
+	path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if path != nil {
+		t.Fatalf("expected no path due to drop limit, got %v", path)
+	}
+}
+
+func TestBlockNavigatorGroundRouteRequiresClearance(t *testing.T) {
+	dims := world.Dimensions{Width: 5, Depth: 3, Height: 4}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+	surroundWithWalls(chunk, 3)
+
+	// Corridor at y=1 with a low ceiling in the middle that blocks default clearance of 2.
+	for x := 1; x <= 3; x++ {
+		chunk.ClearLocalBlock(x, 1, 1)
+		chunk.ClearLocalBlock(x, 1, 2)
+	}
+
+	chunk.SetLocalBlock(2, 1, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 1, Y: 1, Z: 1}
+	goal := world.BlockCoord{X: 3, Y: 1, Z: 1}
+
+	path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if path != nil {
+		t.Fatalf("expected no path due to insufficient clearance, got %v", path)
+	}
+}
+
+func TestBlockNavigatorGroundRouteWithReducedClearanceSucceeds(t *testing.T) {
+	dims := world.Dimensions{Width: 3, Depth: 1, Height: 4}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Leave a low ceiling at Z=2 so only one vertical block of air is available.
+	chunk.SetLocalBlock(1, 0, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 0, Z: 1}
+	goal := world.BlockCoord{X: 2, Y: 0, Z: 1}
+
+	tightProfile := DefaultProfile(ModeGround)
+	tightProfile.Clearance = 1
+
+	path := navigator.FindRoute(context.Background(), start, goal, tightProfile)
+	if len(path) == 0 {
+		t.Fatalf("expected path through low corridor, got none")
+	}
+	if path[0] != start || path[len(path)-1] != goal {
+		t.Fatalf("unexpected endpoints for path %v", path)
+	}
+	for _, step := range path {
+		if step == (world.BlockCoord{X: 1, Y: 0, Z: 1}) {
+			return
+		}
+	}
+	t.Fatalf("path did not traverse the corridor block: %v", path)
+}
+
+func TestBlockNavigatorFlyingRouteDetoursVertically(t *testing.T) {
+	dims := world.Dimensions{Width: 4, Depth: 1, Height: 5}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Build a pillar that blocks the direct path at Z=2.
+	chunk.SetLocalBlock(1, 0, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 0, Z: 2}
+	goal := world.BlockCoord{X: 3, Y: 0, Z: 2}
+
+	path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeFlying))
+	if len(path) == 0 {
+		t.Fatalf("expected flying unit to find path over obstacle")
+	}
+	climbed := false
+	for _, step := range path {
+		if step.Z > start.Z {
+			climbed = true
+		}
+	}
+	if !climbed {
+		t.Fatalf("expected flying path to climb above obstacle, got %v", path)
+	}
+	if path[0] != start || path[len(path)-1] != goal {
+		t.Fatalf("unexpected endpoints for path %v", path)
+	}
+}
+
+func TestBlockNavigatorUndergroundRouteCanTunnelThroughMineral(t *testing.T) {
+	dims := world.Dimensions{Width: 3, Depth: 1, Height: 4}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Mineral deposit blocking the corridor.
+	chunk.SetLocalBlock(1, 0, 1, world.Block{Type: world.BlockMineral})
+	chunk.SetLocalBlock(1, 0, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 0, Z: 1}
+	goal := world.BlockCoord{X: 2, Y: 0, Z: 1}
+
+	groundPath := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if groundPath != nil {
+		t.Fatalf("ground profile should fail through mineral deposit, got %v", groundPath)
+	}
+
+	tunnelPath := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeUnderground))
+	if len(tunnelPath) == 0 {
+		t.Fatalf("expected underground profile to tunnel through mineral deposit")
+	}
+	if tunnelPath[0] != start || tunnelPath[len(tunnelPath)-1] != goal {
+		t.Fatalf("unexpected tunnel path %v", tunnelPath)
+	}
+}
