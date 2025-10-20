@@ -2,7 +2,7 @@
 
 ## Overview
 
-The project implements a distributed voxel RTS engine. Chunk servers (Go) own 512×512×2048 voxel chunks, simulate entities, compute pathfinding, and manage block physics. Neighboring servers communicate via UDP handshakes to exchange migration and adjacency information. A central orchestrator (Go) launches and supervises chunk servers, exposes HTTP APIs for lookup, and maintains the world index so player clients can resolve which server covers a given coordinate.
+The project implements a distributed voxel RTS engine. Chunk servers (Go) own 512Ã—512Ã—2048 voxel chunks, simulate entities, compute pathfinding, and manage block physics. Neighboring servers communicate via UDP handshakes to exchange migration and adjacency information. A central orchestrator (Go) launches and supervises chunk servers, exposes HTTP APIs for lookup, and maintains the world index so player clients can resolve which server covers a given coordinate.
 
 ## Key Components
 
@@ -15,6 +15,7 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 - Entity migration queues leverage neighbor handshakes to transfer entity state between servers; failed transfers are retried.
 - Pathfinding responds to UDP `pathRequest` messages (see `cmd/pathclient`).
 - Central orchestrator configuration and README describe multi-server setups and lookup endpoints.
+- Chunk servers prefetch chunk summaries for the entered chunk and its adjacent neighbors when entities cross chunk boundaries, reducing client hitching when players explore new regions.
 - README documentation references orchestrator usage and notes that `project_context.md` must be kept current.
 
 ## File References
@@ -59,7 +60,6 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 ## Next Steps (excerpt)
 
 - Add rate limiting/backpressure so voxel/ entity streaming does not overwhelm main servers.
-- Implement chunk streaming optimisations so players receive neighbouring chunks when entering new regions.
 - Expand pathfinding to operate on block-level nodes with traversal constraints per unit type.
 - Integrate persistence (snapshot + replay) and a test harness for voxel updates.
 

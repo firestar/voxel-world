@@ -19,17 +19,18 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	world      *world.Manager
-	entities   *entities.Manager
-	navigator  *pathfinding.ChunkNavigator
-	net        *network.Server
-	logger     *log.Logger
+	cfg       *config.Config
+	world     *world.Manager
+	entities  *entities.Manager
+	navigator *pathfinding.ChunkNavigator
+	net       *network.Server
+	logger    *log.Logger
 
 	chunkCursor       world.LocalChunkIndex
 	streamSeq         uint64
 	dirtyEntities     map[entities.ID]entities.Entity
 	dirtyChunks       map[world.ChunkCoord]struct{}
+	dirtyChunkQueue   []world.ChunkCoord
 	deltaBuffer       *deltaAccumulator
 	deltaSeq          uint64
 	neighbors         *neighborManager
@@ -249,6 +250,7 @@ func (s *Server) updateEntityChunk(ent *entities.Entity) {
 		if chunkCoord != ent.Chunk.Chunk {
 			s.entities.Transfer(ent.ID, chunkCoord, s.cfg.Server.ID)
 			s.recordDirtyEntity(ent)
+			s.prefetchChunkNeighborhood(chunkCoord)
 		}
 		return
 	}
@@ -452,16 +454,49 @@ func (s *Server) markChunksDirty(chunks []world.ChunkCoord) {
 		return
 	}
 	for _, coord := range chunks {
+		if _, exists := s.dirtyChunks[coord]; exists {
+			continue
+		}
 		s.dirtyChunks[coord] = struct{}{}
+		s.dirtyChunkQueue = append(s.dirtyChunkQueue, coord)
 	}
 }
 
 func (s *Server) popDirtyChunk() (world.ChunkCoord, bool) {
-	for coord := range s.dirtyChunks {
+	for len(s.dirtyChunkQueue) > 0 {
+		coord := s.dirtyChunkQueue[0]
+		s.dirtyChunkQueue = s.dirtyChunkQueue[1:]
+		if _, ok := s.dirtyChunks[coord]; !ok {
+			continue
+		}
 		delete(s.dirtyChunks, coord)
 		return coord, true
 	}
 	return world.ChunkCoord{}, false
+}
+
+func (s *Server) prefetchChunkNeighborhood(center world.ChunkCoord) {
+	region := s.world.Region()
+	if !region.ContainsGlobalChunk(center) {
+		return
+	}
+
+	neighbors := make([]world.ChunkCoord, 0, 9)
+	neighbors = append(neighbors, center)
+	for dx := -1; dx <= 1; dx++ {
+		for dy := -1; dy <= 1; dy++ {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			neighbor := world.ChunkCoord{X: center.X + dx, Y: center.Y + dy}
+			if !region.ContainsGlobalChunk(neighbor) {
+				continue
+			}
+			neighbors = append(neighbors, neighbor)
+		}
+	}
+
+	s.markChunksDirty(neighbors)
 }
 
 func (s *Server) queueVoxelDeltas(summary *world.DamageSummary) {
@@ -511,13 +546,13 @@ func (s *Server) flushDirtyEntities() {
 		return
 	}
 
-	entities := make([]entities.Entity, 0, size)
+	list := make([]entities.Entity, 0, size)
 	for _, ent := range s.dirtyEntities {
-		entities = append(entities, ent)
+		list = append(list, ent)
 	}
 
 	s.dirtyEntities = make(map[entities.ID]entities.Entity, size)
-	s.streamEntities(entities)
+	s.streamEntities(list)
 }
 
 func (s *Server) streamEntities(list []entities.Entity) {
@@ -744,7 +779,7 @@ func (s *Server) buildEntityFromState(state network.EntityState, targetChunk wor
 			CanDig: state.CanDig,
 		},
 		Attributes: make(map[string]float64),
-		LastTick:  time.Now(),
+		LastTick:   time.Now(),
 	}
 	for k, v := range state.Attributes {
 		ent.Attributes[k] = v
@@ -889,5 +924,3 @@ func floorDiv(value, size int) int {
 	}
 	return -((-value - 1) / size) - 1
 }
-
-
