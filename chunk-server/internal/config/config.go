@@ -80,6 +80,7 @@ type EntityConfig struct {
 	MaxEntitiesPerChunk int           `json:"maxEntitiesPerChunk"`
 	EntityTickRate      time.Duration `json:"entityTickRate"`
 	ProjectileTickRate  time.Duration `json:"projectileTickRate"`
+	MovementWorkers     int           `json:"movementWorkers"`
 }
 
 type ChunkIndex struct {
@@ -173,6 +174,7 @@ func Default() *Config {
 			MaxEntitiesPerChunk: 4096,
 			EntityTickRate:      33 * time.Millisecond,
 			ProjectileTickRate:  16 * time.Millisecond,
+			MovementWorkers:     1,
 		},
 	}
 }
@@ -192,6 +194,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Entities.MaxEntitiesPerChunk <= 0 {
 		return errors.New("entities.maxEntitiesPerChunk must be positive")
+	}
+	if c.Entities.MovementWorkers < 0 {
+		return errors.New("entities.movementWorkers cannot be negative")
 	}
 	return nil
 }

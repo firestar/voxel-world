@@ -8,10 +8,10 @@ import (
 )
 
 type Manager struct {
-	mu          sync.RWMutex
-	entities    map[ID]*Entity
-	byChunk     map[world.ChunkCoord]map[ID]*Entity
-	serverID    string
+	mu       sync.RWMutex
+	entities map[ID]*Entity
+	byChunk  map[world.ChunkCoord]map[ID]*Entity
+	serverID string
 }
 
 func NewManager(serverID string) *Manager {
@@ -131,6 +131,12 @@ func (m *Manager) MutableByChunk(coord world.ChunkCoord) []*Entity {
 
 // Apply executes fn for every entity and returns snapshots of those that became dirty or dying.
 func (m *Manager) Apply(fn func(*Entity)) []Entity {
+	return m.ApplyConcurrent(1, fn)
+}
+
+// ApplyConcurrent executes fn for every entity, partitioning work across the requested number of workers.
+// It returns snapshots of entities that became dirty or dying during processing.
+func (m *Manager) ApplyConcurrent(workers int, fn func(*Entity)) []Entity {
 	m.mu.RLock()
 	entities := make([]*Entity, 0, len(m.entities))
 	for _, ent := range m.entities {
@@ -138,21 +144,66 @@ func (m *Manager) Apply(fn func(*Entity)) []Entity {
 	}
 	m.mu.RUnlock()
 
-	if len(entities) == 0 {
+	count := len(entities)
+	if count == 0 {
 		return nil
 	}
 
-	dirtySnapshots := make([]Entity, 0, len(entities))
-	toRemove := make([]ID, 0)
-	for _, ent := range entities {
-		fn(ent)
-		snapshot := ent.Snapshot()
-		if snapshot.Dirty || snapshot.Dying {
-			dirtySnapshots = append(dirtySnapshots, snapshot)
-			ent.MarkClean()
+	if workers <= 1 {
+		workers = 1
+	}
+	if workers > count {
+		workers = count
+	}
+
+	type workerResult struct {
+		dirty    []Entity
+		toRemove []ID
+	}
+
+	results := make([]workerResult, workers)
+	var wg sync.WaitGroup
+	chunkSize := (count + workers - 1) / workers
+	for i := 0; i < workers; i++ {
+		start := i * chunkSize
+		if start >= count {
+			break
 		}
-		if snapshot.Dying {
-			toRemove = append(toRemove, ent.ID)
+		end := start + chunkSize
+		if end > count {
+			end = count
+		}
+		wg.Add(1)
+		go func(idx int, subset []*Entity) {
+			defer wg.Done()
+			res := workerResult{
+				dirty:    make([]Entity, 0, len(subset)),
+				toRemove: make([]ID, 0),
+			}
+			for _, ent := range subset {
+				fn(ent)
+				snapshot := ent.Snapshot()
+				if snapshot.Dirty || snapshot.Dying {
+					res.dirty = append(res.dirty, snapshot)
+					ent.MarkClean()
+				}
+				if snapshot.Dying {
+					res.toRemove = append(res.toRemove, ent.ID)
+				}
+			}
+			results[idx] = res
+		}(i, entities[start:end])
+	}
+	wg.Wait()
+
+	dirtySnapshots := make([]Entity, 0, count)
+	toRemove := make([]ID, 0)
+	for _, res := range results {
+		if len(res.dirty) > 0 {
+			dirtySnapshots = append(dirtySnapshots, res.dirty...)
+		}
+		if len(res.toRemove) > 0 {
+			toRemove = append(toRemove, res.toRemove...)
 		}
 	}
 
@@ -174,5 +225,8 @@ func (m *Manager) Apply(fn func(*Entity)) []Entity {
 		m.mu.Unlock()
 	}
 
+	if len(dirtySnapshots) == 0 {
+		return nil
+	}
 	return dirtySnapshots
 }
