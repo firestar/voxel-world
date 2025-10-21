@@ -308,8 +308,36 @@ func TestBlockNavigatorGroundRouteStepsArePassable(t *testing.T) {
 	cache := make(map[world.ChunkCoord]*world.Chunk)
 	profile := DefaultProfile(ModeGround)
 	for idx, step := range path {
-		if !navigator.passable(context.Background(), cache, step, profile) {
+		if !navigator.passable(context.Background(), cache, step, profile, nil) {
 			t.Fatalf("path step %d (%v) is not passable", idx, step)
 		}
+	}
+}
+
+func TestFindRouteWithStatsRecordsInstrumentation(t *testing.T) {
+	dims := world.Dimensions{Width: 4, Depth: 4, Height: 4}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+	chunk.SetLocalBlock(1, 1, 1, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 0, Z: 1}
+	goal := world.BlockCoord{X: 3, Y: 3, Z: 1}
+
+	path, stats := navigator.FindRouteWithStats(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if len(path) == 0 {
+		t.Fatalf("expected route between %v and %v", start, goal)
+	}
+	if stats.NodesExpanded == 0 {
+		t.Fatalf("expected nodes to be expanded, got %#v", stats)
+	}
+	if stats.HeuristicEvaluations == 0 {
+		t.Fatalf("expected heuristic evaluations, got %#v", stats)
+	}
+	if stats.CacheMisses == 0 {
+		t.Fatalf("expected cache misses to be tracked, got %#v", stats)
+	}
+	if stats.CacheHits == 0 {
+		t.Fatalf("expected cache hits to be tracked, got %#v", stats)
 	}
 }

@@ -35,6 +35,14 @@ func NewBlockNavigator(region world.ServerRegion, world *world.Manager) *BlockNa
 	return &BlockNavigator{region: region, world: world}
 }
 
+// RouteStats captures instrumentation gathered while evaluating a path.
+type RouteStats struct {
+	NodesExpanded        int
+	HeuristicEvaluations int
+	CacheHits            int
+	CacheMisses          int
+}
+
 // DefaultProfile returns traversal defaults for the given unit mode.
 func DefaultProfile(mode Mode) UnitProfile {
 	switch mode {
@@ -63,25 +71,32 @@ func ModeFromString(value string) Mode {
 
 // FindRoute locates a block-level path subject to unit traversal constraints.
 func (n *BlockNavigator) FindRoute(ctx context.Context, start, goal world.BlockCoord, profile UnitProfile) []world.BlockCoord {
+	path, _ := n.FindRouteWithStats(ctx, start, goal, profile)
+	return path
+}
+
+// FindRouteWithStats locates a path and records profiling data for the search.
+func (n *BlockNavigator) FindRouteWithStats(ctx context.Context, start, goal world.BlockCoord, profile UnitProfile) ([]world.BlockCoord, RouteStats) {
+	var stats RouteStats
 	if start == goal {
-		return []world.BlockCoord{start}
+		return []world.BlockCoord{start}, stats
 	}
 	if n.world == nil {
-		return nil
+		return nil, stats
 	}
 	if _, ok := n.region.LocateBlock(start); !ok {
-		return nil
+		return nil, stats
 	}
 	if _, ok := n.region.LocateBlock(goal); !ok {
-		return nil
+		return nil, stats
 	}
 
 	chunkCache := make(map[world.ChunkCoord]*world.Chunk)
-	if !n.passable(ctx, chunkCache, start, profile) {
-		return nil
+	if !n.passable(ctx, chunkCache, start, profile, &stats) {
+		return nil, stats
 	}
-	if !n.passable(ctx, chunkCache, goal, profile) {
-		return nil
+	if !n.passable(ctx, chunkCache, goal, profile, &stats) {
+		return nil, stats
 	}
 
 	open := &blockQueue{}
@@ -94,16 +109,17 @@ func (n *BlockNavigator) FindRoute(ctx context.Context, start, goal world.BlockC
 	for open.Len() > 0 {
 		select {
 		case <-ctx.Done():
-			return nil
+			return nil, stats
 		default:
 		}
 
 		current := heap.Pop(open).(*blockPath)
+		stats.NodesExpanded++
 		if current.coord == goal {
-			return reconstructBlocks(cameFrom, current.coord)
+			return reconstructBlocks(cameFrom, current.coord), stats
 		}
 
-		neighbors := n.neighbors(ctx, chunkCache, current.coord, profile)
+		neighbors := n.neighbors(ctx, chunkCache, current.coord, profile, &stats)
 		for _, neighbor := range neighbors {
 			tentative := gScore[current.coord] + 1
 			if score, ok := gScore[neighbor]; ok && tentative >= score {
@@ -111,26 +127,27 @@ func (n *BlockNavigator) FindRoute(ctx context.Context, start, goal world.BlockC
 			}
 			cameFrom[neighbor] = current.coord
 			gScore[neighbor] = tentative
+			stats.HeuristicEvaluations++
 			priority := tentative + heuristicBlocks(neighbor, goal)
 			heap.Push(open, &blockPath{coord: neighbor, priority: priority})
 		}
 	}
 
-	return nil
+	return nil, stats
 }
 
-func (n *BlockNavigator) neighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile) []world.BlockCoord {
+func (n *BlockNavigator) neighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile, stats *RouteStats) []world.BlockCoord {
 	switch profile.Mode {
 	case ModeFlying:
-		return n.flyingNeighbors(ctx, cache, coord, profile)
+		return n.flyingNeighbors(ctx, cache, coord, profile, stats)
 	case ModeUnderground:
-		return n.undergroundNeighbors(ctx, cache, coord, profile)
+		return n.undergroundNeighbors(ctx, cache, coord, profile, stats)
 	default:
-		return n.groundNeighbors(ctx, cache, coord, profile)
+		return n.groundNeighbors(ctx, cache, coord, profile, stats)
 	}
 }
 
-func (n *BlockNavigator) groundNeighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile) []world.BlockCoord {
+func (n *BlockNavigator) groundNeighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile, stats *RouteStats) []world.BlockCoord {
 	offsets := [...]struct{ dx, dy int }{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
 	maxDelta := profile.MaxClimb
 	if profile.MaxDrop > maxDelta {
@@ -157,7 +174,7 @@ func (n *BlockNavigator) groundNeighbors(ctx context.Context, cache map[world.Ch
 				if _, ok := seen[candidate]; ok {
 					continue
 				}
-				if !n.passable(ctx, cache, candidate, profile) {
+				if !n.passable(ctx, cache, candidate, profile, stats) {
 					continue
 				}
 				dz := targetZ - coord.Z
@@ -175,7 +192,7 @@ func (n *BlockNavigator) groundNeighbors(ctx context.Context, cache map[world.Ch
 	return neighbors
 }
 
-func (n *BlockNavigator) flyingNeighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile) []world.BlockCoord {
+func (n *BlockNavigator) flyingNeighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile, stats *RouteStats) []world.BlockCoord {
 	offsets := [...]struct{ dx, dy, dz int }{
 		{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1},
 	}
@@ -186,7 +203,7 @@ func (n *BlockNavigator) flyingNeighbors(ctx context.Context, cache map[world.Ch
 		if dz > profile.MaxClimb || dz < -profile.MaxDrop {
 			continue
 		}
-		if !n.passable(ctx, cache, candidate, profile) {
+		if !n.passable(ctx, cache, candidate, profile, stats) {
 			continue
 		}
 		neighbors = append(neighbors, candidate)
@@ -194,12 +211,12 @@ func (n *BlockNavigator) flyingNeighbors(ctx context.Context, cache map[world.Ch
 	return neighbors
 }
 
-func (n *BlockNavigator) undergroundNeighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile) []world.BlockCoord {
+func (n *BlockNavigator) undergroundNeighbors(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile, stats *RouteStats) []world.BlockCoord {
 	// Underground traversal uses the same neighborhood as flying but respects digging constraints.
-	return n.flyingNeighbors(ctx, cache, coord, profile)
+	return n.flyingNeighbors(ctx, cache, coord, profile, stats)
 }
 
-func (n *BlockNavigator) passable(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile) bool {
+func (n *BlockNavigator) passable(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, profile UnitProfile, stats *RouteStats) bool {
 	dims := n.region.ChunkDimension
 	if coord.Z < 0 || coord.Z >= dims.Height {
 		return false
@@ -213,7 +230,7 @@ func (n *BlockNavigator) passable(ctx context.Context, cache map[world.ChunkCoor
 		if test.Z >= dims.Height {
 			return false
 		}
-		block, ok := n.blockAt(ctx, cache, test)
+		block, ok := n.blockAt(ctx, cache, test, stats)
 		if !ok {
 			return false
 		}
@@ -231,7 +248,7 @@ func (n *BlockNavigator) passable(ctx context.Context, cache map[world.ChunkCoor
 			return false
 		}
 		below := world.BlockCoord{X: coord.X, Y: coord.Y, Z: coord.Z - 1}
-		block, ok := n.blockAt(ctx, cache, below)
+		block, ok := n.blockAt(ctx, cache, below, stats)
 		if !ok {
 			return false
 		}
@@ -244,19 +261,24 @@ func (n *BlockNavigator) passable(ctx context.Context, cache map[world.ChunkCoor
 	}
 }
 
-func (n *BlockNavigator) blockAt(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord) (world.Block, bool) {
+func (n *BlockNavigator) blockAt(ctx context.Context, cache map[world.ChunkCoord]*world.Chunk, coord world.BlockCoord, stats *RouteStats) (world.Block, bool) {
 	chunkCoord, ok := n.region.LocateBlock(coord)
 	if !ok {
 		return world.Block{}, false
 	}
 	chunk, ok := cache[chunkCoord]
 	if !ok {
+		if stats != nil {
+			stats.CacheMisses++
+		}
 		ch, err := n.world.Chunk(ctx, chunkCoord)
 		if err != nil {
 			return world.Block{}, false
 		}
 		chunk = ch
 		cache[chunkCoord] = chunk
+	} else if stats != nil {
+		stats.CacheHits++
 	}
 	localX, localY, localZ, ok := chunk.GlobalToLocal(coord)
 	if !ok {
