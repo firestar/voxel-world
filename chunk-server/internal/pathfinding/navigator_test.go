@@ -266,3 +266,50 @@ func TestBlockNavigatorUndergroundRouteCanTunnelThroughMineral(t *testing.T) {
 		t.Fatalf("unexpected tunnel path %v", tunnelPath)
 	}
 }
+
+func TestBlockNavigatorGroundRouteRejectsBlockedEndpoints(t *testing.T) {
+	dims := world.Dimensions{Width: 5, Depth: 3, Height: 4}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	start := world.BlockCoord{X: 1, Y: 1, Z: 1}
+	goal := world.BlockCoord{X: 3, Y: 1, Z: 1}
+
+	chunk.SetLocalBlock(start.X, start.Y, start.Z, world.Block{Type: world.BlockSolid})
+	if path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround)); path != nil {
+		t.Fatalf("expected no path when start block is occupied, got %v", path)
+	}
+
+	chunk.ClearLocalBlock(start.X, start.Y, start.Z)
+	chunk.SetLocalBlock(goal.X, goal.Y, goal.Z, world.Block{Type: world.BlockSolid})
+	if path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround)); path != nil {
+		t.Fatalf("expected no path when goal block is occupied, got %v", path)
+	}
+}
+
+func TestBlockNavigatorGroundRouteStepsArePassable(t *testing.T) {
+	dims := world.Dimensions{Width: 5, Depth: 3, Height: 4}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Column blocking the direct path that forces a detour.
+	chunk.SetLocalBlock(2, 1, 1, world.Block{Type: world.BlockSolid})
+	chunk.SetLocalBlock(2, 1, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 1, Z: 1}
+	goal := world.BlockCoord{X: 4, Y: 1, Z: 1}
+
+	path := navigator.FindRoute(context.Background(), start, goal, DefaultProfile(ModeGround))
+	if len(path) == 0 {
+		t.Fatalf("expected ground route around obstacle")
+	}
+	cache := make(map[world.ChunkCoord]*world.Chunk)
+	profile := DefaultProfile(ModeGround)
+	for idx, step := range path {
+		if !navigator.passable(context.Background(), cache, step, profile) {
+			t.Fatalf("path step %d (%v) is not passable", idx, step)
+		}
+	}
+}
