@@ -15,6 +15,7 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 - Entity migration queues leverage neighbor handshakes to transfer entity state between servers; failed transfers are retried.
 - Pathfinding responds to UDP `pathRequest` messages (see `cmd/pathclient`).
 - Pathfinding now evaluates routes at the block level with unit-specific traversal profiles (ground, flying, underground) that enforce clearance, climb, and drop limits.
+- Block-level pathfinding exposes profiler hooks to track heuristic usage, node expansion, and chunk cache behaviour for load testing.
 - Central orchestrator configuration and README describe multi-server setups and lookup endpoints.
 - Chunk servers prefetch chunk summaries for the entered chunk and its adjacent neighbors when entities cross chunk boundaries, reducing client hitching when players explore new regions.
 - Movement simulation now runs on a dedicated worker that can scale across multiple threads and hands off entity/projectile velocity to neighboring servers when they exit a chunk.

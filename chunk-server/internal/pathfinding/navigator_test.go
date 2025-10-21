@@ -313,3 +313,70 @@ func TestBlockNavigatorGroundRouteStepsArePassable(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockNavigatorProfilerRecordsMetrics(t *testing.T) {
+	dims := world.Dimensions{Width: 6, Depth: 6, Height: 6}
+	navigator, chunk := newTestNavigator(t, dims)
+
+	addFloor(chunk, 0)
+
+	// Place a pillar to force the search to evaluate multiple neighbors.
+	chunk.SetLocalBlock(2, 2, 1, world.Block{Type: world.BlockSolid})
+	chunk.SetLocalBlock(2, 2, 2, world.Block{Type: world.BlockSolid})
+
+	start := world.BlockCoord{X: 0, Y: 0, Z: 1}
+	goal := world.BlockCoord{X: 5, Y: 5, Z: 1}
+
+	metrics := &NavigatorMetrics{}
+	ctx := ContextWithProfiler(context.Background(), metrics.Profiler())
+
+	path := navigator.FindRoute(ctx, start, goal, DefaultProfile(ModeGround))
+	if len(path) == 0 {
+		t.Fatalf("expected path to be found with profiling enabled")
+	}
+
+	snapshot := metrics.Snapshot()
+	if snapshot.CacheMisses == 0 {
+		t.Fatalf("expected cache misses to be recorded, got %#v", snapshot)
+	}
+	if snapshot.CacheHits == 0 {
+		t.Fatalf("expected cache hits to be recorded, got %#v", snapshot)
+	}
+	if snapshot.ChunkLoads == 0 {
+		t.Fatalf("expected chunk load count to be recorded, got %#v", snapshot)
+	}
+	if snapshot.HeuristicEvaluations == 0 {
+		t.Fatalf("expected heuristic evaluations to be recorded, got %#v", snapshot)
+	}
+	if snapshot.NodesExpanded == 0 {
+		t.Fatalf("expected node expansions to be recorded, got %#v", snapshot)
+	}
+	if snapshot.NeighborGenerations == 0 || snapshot.NeighborCount == 0 {
+		t.Fatalf("expected neighbor generation metrics to be recorded, got %#v", snapshot)
+	}
+}
+
+func TestNavigatorMetricsReset(t *testing.T) {
+	metrics := &NavigatorMetrics{}
+	profiler := metrics.Profiler()
+
+	profiler.RecordCacheHit()
+	profiler.RecordCacheMiss()
+	profiler.RecordChunkLoad(5)
+	profiler.RecordHeuristicEvaluation()
+	profiler.RecordNodeExpanded()
+	profiler.RecordNeighborGeneration(3)
+
+	snapshot := metrics.Snapshot()
+	if snapshot.CacheHits == 0 || snapshot.CacheMisses == 0 || snapshot.ChunkLoads == 0 {
+		t.Fatalf("expected metrics snapshot to include recorded values, got %#v", snapshot)
+	}
+
+	metrics.Reset()
+	cleared := metrics.Snapshot()
+	if cleared.CacheHits != 0 || cleared.CacheMisses != 0 || cleared.ChunkLoads != 0 || cleared.ChunkLoadTime != 0 ||
+		cleared.HeuristicEvaluations != 0 || cleared.NodesExpanded != 0 || cleared.NeighborGenerations != 0 ||
+		cleared.NeighborCount != 0 {
+		t.Fatalf("expected reset metrics to be zeroed, got %#v", cleared)
+	}
+}
