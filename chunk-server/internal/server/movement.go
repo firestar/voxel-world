@@ -6,14 +6,31 @@ import (
 	"time"
 )
 
-type movementEngine struct {
-	server  *Server
-	tick    time.Duration
-	workers int
-	wg      sync.WaitGroup
+type entityTicker interface {
+	tickEntities(delta time.Duration, workers int)
 }
 
-func newMovementEngine(server *Server, tick time.Duration, workers int) *movementEngine {
+type tickerFactory func(time.Duration) (<-chan time.Time, func())
+
+type timeSource func() time.Time
+
+type movementEngine struct {
+	target    entityTicker
+	tick      time.Duration
+	workers   int
+	wg        sync.WaitGroup
+	newTicker tickerFactory
+	now       timeSource
+}
+
+func defaultTickerFactory() tickerFactory {
+	return func(d time.Duration) (<-chan time.Time, func()) {
+		ticker := time.NewTicker(d)
+		return ticker.C, ticker.Stop
+	}
+}
+
+func newMovementEngine(target entityTicker, tick time.Duration, workers int) *movementEngine {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -21,14 +38,16 @@ func newMovementEngine(server *Server, tick time.Duration, workers int) *movemen
 		tick = 33 * time.Millisecond
 	}
 	return &movementEngine{
-		server:  server,
-		tick:    tick,
-		workers: workers,
+		target:    target,
+		tick:      tick,
+		workers:   workers,
+		newTicker: defaultTickerFactory(),
+		now:       time.Now,
 	}
 }
 
 func (m *movementEngine) Start(ctx context.Context) {
-	if m == nil || m.server == nil {
+	if m == nil || m.target == nil {
 		return
 	}
 	m.wg.Add(1)
@@ -37,15 +56,22 @@ func (m *movementEngine) Start(ctx context.Context) {
 
 func (m *movementEngine) run(ctx context.Context) {
 	defer m.wg.Done()
-	ticker := time.NewTicker(m.tick)
-	defer ticker.Stop()
+	if m.newTicker == nil {
+		m.newTicker = defaultTickerFactory()
+	}
+	if m.now == nil {
+		m.now = time.Now
+	}
 
-	last := time.Now()
+	tickerC, stop := m.newTicker(m.tick)
+	defer stop()
+
+	last := m.now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
+		case now := <-tickerC:
 			delta := now.Sub(last)
 			if delta <= 0 {
 				delta = m.tick
@@ -53,7 +79,7 @@ func (m *movementEngine) run(ctx context.Context) {
 				delta = m.tick
 			}
 			last = now
-			m.server.tickEntities(delta, m.workers)
+			m.target.tickEntities(delta, m.workers)
 		}
 	}
 }
