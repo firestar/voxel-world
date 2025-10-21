@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"strings"
+	"time"
 
 	"chunkserver/internal/world"
 )
@@ -63,6 +64,7 @@ func ModeFromString(value string) Mode {
 
 // FindRoute locates a block-level path subject to unit traversal constraints.
 func (n *BlockNavigator) FindRoute(ctx context.Context, start, goal world.BlockCoord, profile UnitProfile) []world.BlockCoord {
+	profiler := profilerFromContext(ctx)
 	if start == goal {
 		return []world.BlockCoord{start}
 	}
@@ -99,11 +101,17 @@ func (n *BlockNavigator) FindRoute(ctx context.Context, start, goal world.BlockC
 		}
 
 		current := heap.Pop(open).(*blockPath)
+		if profiler != nil {
+			profiler.RecordNodeExpanded()
+		}
 		if current.coord == goal {
 			return reconstructBlocks(cameFrom, current.coord)
 		}
 
 		neighbors := n.neighbors(ctx, chunkCache, current.coord, profile)
+		if profiler != nil {
+			profiler.RecordNeighborGeneration(len(neighbors))
+		}
 		for _, neighbor := range neighbors {
 			tentative := gScore[current.coord] + 1
 			if score, ok := gScore[neighbor]; ok && tentative >= score {
@@ -111,6 +119,9 @@ func (n *BlockNavigator) FindRoute(ctx context.Context, start, goal world.BlockC
 			}
 			cameFrom[neighbor] = current.coord
 			gScore[neighbor] = tentative
+			if profiler != nil {
+				profiler.RecordHeuristicEvaluation()
+			}
 			priority := tentative + heuristicBlocks(neighbor, goal)
 			heap.Push(open, &blockPath{coord: neighbor, priority: priority})
 		}
@@ -249,14 +260,24 @@ func (n *BlockNavigator) blockAt(ctx context.Context, cache map[world.ChunkCoord
 	if !ok {
 		return world.Block{}, false
 	}
+	profiler := profilerFromContext(ctx)
 	chunk, ok := cache[chunkCoord]
 	if !ok {
+		if profiler != nil {
+			profiler.RecordCacheMiss()
+		}
+		start := time.Now()
 		ch, err := n.world.Chunk(ctx, chunkCoord)
 		if err != nil {
 			return world.Block{}, false
 		}
+		if profiler != nil {
+			profiler.RecordChunkLoad(time.Since(start))
+		}
 		chunk = ch
 		cache[chunkCoord] = chunk
+	} else if profiler != nil {
+		profiler.RecordCacheHit()
 	}
 	localX, localY, localZ, ok := chunk.GlobalToLocal(coord)
 	if !ok {
