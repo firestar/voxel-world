@@ -17,6 +17,9 @@ const (
 
 type Block struct {
 	Type            BlockType
+	Material        string
+	Color           string
+	Texture         string
 	HitPoints       float64
 	MaxHitPoints    float64
 	ConnectingForce float64

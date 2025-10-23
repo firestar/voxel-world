@@ -10,19 +10,19 @@ import (
 
 // NoiseGenerator creates repeatable terrain using hashed value noise.
 type NoiseGenerator struct {
-	cfg           config.TerrainConfig
-	economy       config.EconomyConfig
-	seed          int64
-	surface       int
+	cfg            config.TerrainConfig
+	economy        config.EconomyConfig
+	seed           int64
+	surface        int
 	undergroundCap int
 }
 
 func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *NoiseGenerator {
 	return &NoiseGenerator{
-		cfg:           cfg,
-		economy:       economy,
-		seed:          cfg.Seed,
-		surface:       1024,
+		cfg:            cfg,
+		economy:        economy,
+		seed:           cfg.Seed,
+		surface:        1024,
 		undergroundCap: 896,
 	}
 }
@@ -93,12 +93,18 @@ func (g *NoiseGenerator) composeTerrainBlock(globalX, globalY, globalZ int, surf
 		block.ConnectingForce = 70
 		block.Weight = 6
 		block.Metadata["layer"] = "topsoil"
+		if depth == 0 {
+			world.ApplyAppearance(&block, world.MaterialGrass)
+		} else {
+			world.ApplyAppearance(&block, world.MaterialDirt)
+		}
 	case depth <= 12:
 		block.HitPoints = 130
 		block.MaxHitPoints = 130
 		block.ConnectingForce = 95
 		block.Weight = 9
 		block.Metadata["layer"] = "subsoil"
+		world.ApplyAppearance(&block, world.MaterialDirt)
 	case depth <= 64:
 		block.HitPoints = 190
 		block.MaxHitPoints = 190
