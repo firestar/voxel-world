@@ -62,13 +62,16 @@ type ChunkDelta struct {
 }
 
 type BlockChange struct {
-	X      int     `json:"x"`
-	Y      int     `json:"y"`
-	Z      int     `json:"z"`
-	Type   string  `json:"type"`
-	HP     float64 `json:"hp"`
-	MaxHP  float64 `json:"maxHp"`
-	Reason string  `json:"reason"`
+	X        int     `json:"x"`
+	Y        int     `json:"y"`
+	Z        int     `json:"z"`
+	Type     string  `json:"type"`
+	Material string  `json:"material,omitempty"`
+	Color    string  `json:"color,omitempty"`
+	Texture  string  `json:"texture,omitempty"`
+	HP       float64 `json:"hp"`
+	MaxHP    float64 `json:"maxHp"`
+	Reason   string  `json:"reason"`
 }
 
 type NeighborHello struct {

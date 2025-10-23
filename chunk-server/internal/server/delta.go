@@ -69,13 +69,16 @@ func (d *deltaAccumulator) flush(serverID string, seq *uint64) []network.ChunkDe
 		*seq++
 		for coord, change := range blocks {
 			delta.Blocks = append(delta.Blocks, network.BlockChange{
-				X:      coord.X,
-				Y:      coord.Y,
-				Z:      coord.Z,
-				Type:   string(change.After.Type),
-				HP:     change.After.HitPoints,
-				MaxHP:  change.After.MaxHitPoints,
-				Reason: string(change.Reason),
+				X:        coord.X,
+				Y:        coord.Y,
+				Z:        coord.Z,
+				Type:     string(change.After.Type),
+				Material: change.After.Material,
+				Color:    change.After.Color,
+				Texture:  change.After.Texture,
+				HP:       change.After.HitPoints,
+				MaxHP:    change.After.MaxHitPoints,
+				Reason:   string(change.Reason),
 			})
 		}
 		deltas = append(deltas, delta)
