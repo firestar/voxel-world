@@ -18,6 +18,7 @@ type Config struct {
 	Terrain     TerrainConfig     `json:"terrain"`
 	Economy     EconomyConfig     `json:"economy"`
 	Entities    EntityConfig      `json:"entities"`
+	Environment EnvironmentConfig `json:"environment"`
 }
 
 type ServerConfig struct {
@@ -81,6 +82,17 @@ type EntityConfig struct {
 	EntityTickRate      time.Duration `json:"entityTickRate"`
 	ProjectileTickRate  time.Duration `json:"projectileTickRate"`
 	MovementWorkers     int           `json:"movementWorkers"`
+}
+
+type EnvironmentConfig struct {
+	DayLength          time.Duration `json:"dayLength"`
+	WeatherMinDuration time.Duration `json:"weatherMinDuration"`
+	WeatherMaxDuration time.Duration `json:"weatherMaxDuration"`
+	StormChance        float64       `json:"stormChance"`
+	RainChance         float64       `json:"rainChance"`
+	WindBase           float64       `json:"windBase"`
+	WindVariance       float64       `json:"windVariance"`
+	Seed               int64         `json:"seed"`
 }
 
 type ChunkIndex struct {
@@ -176,6 +188,16 @@ func Default() *Config {
 			ProjectileTickRate:  16 * time.Millisecond,
 			MovementWorkers:     1,
 		},
+		Environment: EnvironmentConfig{
+			DayLength:          20 * time.Minute,
+			WeatherMinDuration: 2 * time.Minute,
+			WeatherMaxDuration: 5 * time.Minute,
+			StormChance:        0.15,
+			RainChance:         0.35,
+			WindBase:           3.0,
+			WindVariance:       5.0,
+			Seed:               1337,
+		},
 	}
 }
 
@@ -197,6 +219,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Entities.MovementWorkers < 0 {
 		return errors.New("entities.movementWorkers cannot be negative")
+	}
+	if c.Environment.WeatherMaxDuration > 0 && c.Environment.WeatherMaxDuration < c.Environment.WeatherMinDuration {
+		return errors.New("environment.weatherMaxDuration must be >= weatherMinDuration")
+	}
+	if c.Environment.StormChance < 0 || c.Environment.RainChance < 0 {
+		return errors.New("environment storm/rain chances cannot be negative")
+	}
+	if c.Environment.StormChance+c.Environment.RainChance > 1.0 {
+		return errors.New("environment storm+rain chance must be <= 1")
 	}
 	return nil
 }

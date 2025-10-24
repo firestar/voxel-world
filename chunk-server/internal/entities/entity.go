@@ -40,18 +40,18 @@ type ChunkMembership struct {
 type Entity struct {
 	mu sync.RWMutex
 
-	ID         ID
-	Kind       Kind
-	Name       string
-	Chunk      ChunkMembership
-	Position   Vec3
-	Velocity   Vec3
+	ID           ID
+	Kind         Kind
+	Name         string
+	Chunk        ChunkMembership
+	Position     Vec3
+	Velocity     Vec3
 	Acceleration Vec3
-	Orientation Rotation
-	Blocks     []EntityBlock
-	Stats      Stats
+	Orientation  Rotation
+	Blocks       []EntityBlock
+	Stats        Stats
 	Capabilities Capabilities
-	Attributes map[string]float64
+	Attributes   map[string]float64
 
 	LastTick time.Time
 	Dirty    bool
@@ -67,8 +67,8 @@ type PhysicsParams struct {
 }
 
 type ProjectileParams struct {
-	Lifetime    time.Duration
-	SpawnTime   time.Time
+	Lifetime       time.Duration
+	SpawnTime      time.Time
 	ExplosiveYield float64
 	ImpactRadius   float64
 	DamageFalloff  float64
@@ -87,26 +87,26 @@ const (
 
 type EntityBlock struct {
 	// Offset measured in entity voxels (1 voxel = 1/20 world block).
-	Offset Vec3
+	Offset    Vec3
 	VoxelSize float64
 	Block     world.Block
 	Role      EntityBlockRole
 }
 
 type Stats struct {
-	MaxHP       float64
-	CurrentHP   float64
-	BlockHP     []float64
-	RepairRate  float64 // blocks per second
-	Mass        float64
+	MaxHP      float64
+	CurrentHP  float64
+	BlockHP    []float64
+	RepairRate float64 // blocks per second
+	Mass       float64
 }
 
 type Capabilities struct {
-	CanFly             bool
-	CanDig             bool
-	CanProduceUnits    bool
-	ProjectileVelocity float64
-	ProjectileArc      bool
+	CanFly               bool
+	CanDig               bool
+	CanProduceUnits      bool
+	ProjectileVelocity   float64
+	ProjectileArc        bool
 	UndergroundClearance float64
 }
 
@@ -265,6 +265,30 @@ func (e *Entity) SetVelocity(vel Vec3) {
 	e.mu.Unlock()
 }
 
+func (e *Entity) AddVelocity(delta Vec3) {
+	if delta.X == 0 && delta.Y == 0 && delta.Z == 0 {
+		return
+	}
+	e.mu.Lock()
+	e.Velocity.X += delta.X
+	e.Velocity.Y += delta.Y
+	e.Velocity.Z += delta.Z
+	e.Dirty = true
+	e.mu.Unlock()
+}
+
+func (e *Entity) ScaleVelocity(factor float64) {
+	if factor == 1 {
+		return
+	}
+	e.mu.Lock()
+	e.Velocity.X *= factor
+	e.Velocity.Y *= factor
+	e.Velocity.Z *= factor
+	e.Dirty = true
+	e.mu.Unlock()
+}
+
 func (e *Entity) PositionVec() Vec3 {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -323,6 +347,25 @@ func (e *Entity) SetAttribute(key string, value float64) {
 	e.mu.Lock()
 	if e.Attributes == nil {
 		e.Attributes = make(map[string]float64)
+	}
+	e.Attributes[key] = value
+	e.Dirty = true
+	e.mu.Unlock()
+}
+
+func (e *Entity) SetAttributeIfDifferent(key string, value float64, epsilon float64) {
+	e.mu.Lock()
+	if e.Attributes == nil {
+		e.Attributes = make(map[string]float64)
+	}
+	if current, ok := e.Attributes[key]; ok {
+		if epsilon <= 0 {
+			epsilon = 1e-6
+		}
+		if math.Abs(current-value) <= epsilon {
+			e.mu.Unlock()
+			return
+		}
 	}
 	e.Attributes[key] = value
 	e.Dirty = true

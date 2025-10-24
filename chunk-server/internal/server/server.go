@@ -13,6 +13,7 @@ import (
 	"chunkserver/internal/ai"
 	"chunkserver/internal/config"
 	"chunkserver/internal/entities"
+	"chunkserver/internal/environment"
 	"chunkserver/internal/migration"
 	"chunkserver/internal/network"
 	"chunkserver/internal/pathfinding"
@@ -27,6 +28,7 @@ type Server struct {
 	navigator *pathfinding.BlockNavigator
 	net       *network.Server
 	logger    *log.Logger
+	env       *environment.Environment
 
 	movementWorkers int
 
@@ -44,6 +46,9 @@ type Server struct {
 	migrationQueue    *migration.Queue
 	inFlightTransfers map[entities.ID]migration.Request
 	transferSeq       uint64
+
+	envState environment.State
+	envMu    sync.RWMutex
 
 	dirtyMu sync.Mutex
 }
@@ -76,6 +81,10 @@ func New(cfg *config.Config) (*Server, error) {
 		workers = 1
 	}
 
+	env := environment.New(convertEnvironmentConfig(cfg.Environment))
+
+	initialEnv := env.CurrentState()
+
 	srv := &Server{
 		cfg:               cfg,
 		world:             worldManager,
@@ -83,6 +92,7 @@ func New(cfg *config.Config) (*Server, error) {
 		navigator:         navigator,
 		net:               netSrv,
 		logger:            logger,
+		env:               env,
 		movementWorkers:   workers,
 		dirtyEntities:     make(map[entities.ID]entities.Entity),
 		dirtyChunks:       make(map[world.ChunkCoord]struct{}),
@@ -90,6 +100,7 @@ func New(cfg *config.Config) (*Server, error) {
 		neighbors:         newNeighborManager(region, cfg.Network.NeighborEndpoints),
 		migrationQueue:    migration.NewQueue(),
 		inFlightTransfers: make(map[entities.ID]migration.Request),
+		envState:          initialEnv,
 	}
 	var lookup ai.NeighborLookup
 	if srv.neighbors != nil {
@@ -107,6 +118,12 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 	}
 	srv.ai = ai.NewCoordinator(region, entityManager, navigator, lookup)
+	srv.world.SetLighting(world.LightingState{
+		Ambient:     initialEnv.Lighting.Ambient,
+		SunAngle:    initialEnv.Lighting.SunAngle,
+		FogDensity:  initialEnv.Lighting.FogDensity,
+		WeatherTint: initialEnv.Lighting.WeatherTint,
+	})
 	srv.registerHandlers()
 	return srv, nil
 }
@@ -179,6 +196,18 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) tickEntities(delta time.Duration, workers int) {
 	if s.ai != nil {
 		s.ai.Tick(delta)
+	var envState environment.State
+	if s.env != nil {
+		envState = s.env.Step(delta)
+		s.world.SetLighting(world.LightingState{
+			Ambient:     envState.Lighting.Ambient,
+			SunAngle:    envState.Lighting.SunAngle,
+			FogDensity:  envState.Lighting.FogDensity,
+			WeatherTint: envState.Lighting.WeatherTint,
+		})
+		s.envMu.Lock()
+		s.envState = envState
+		s.envMu.Unlock()
 	}
 	physics := entities.PhysicsParams{
 		Gravity:         9.8,
@@ -187,22 +216,39 @@ func (s *Server) tickEntities(delta time.Duration, workers int) {
 		MaxFallSpeed:    150,
 		SupportsGravity: true,
 	}
+	if envState.Physics.GravityScale != 0 {
+		physics.Gravity *= envState.Physics.GravityScale
+	}
+	if envState.Physics.DragScale != 0 {
+		physics.AirDrag *= envState.Physics.DragScale
+	}
+	if envState.Physics.GroundFrictionScale != 0 {
+		physics.GroundFriction *= envState.Physics.GroundFrictionScale
+	}
 
 	dirty := s.entities.ApplyConcurrent(workers, func(ent *entities.Entity) {
 		switch ent.Kind {
 		case entities.KindProjectile:
-			s.tickProjectile(ent, delta, physics)
+			s.tickProjectile(ent, delta, physics, envState)
 		default:
-			s.tickUnit(ent, delta, physics)
+			s.tickUnit(ent, delta, physics, envState)
 		}
 	})
 
 	s.recordDirtyEntities(dirty)
 }
 
-func (s *Server) tickProjectile(ent *entities.Entity, delta time.Duration, physics entities.PhysicsParams) {
+func (s *Server) tickProjectile(ent *entities.Entity, delta time.Duration, physics entities.PhysicsParams, envState environment.State) {
 	ent.ApplyGravity(physics, delta)
 	ent.ApplyDrag(physics, delta)
+	if envState.Weather.WindSpeed > 0 && envState.Weather.Intensity > 0 {
+		magnitude := envState.Weather.WindSpeed * envState.Weather.Intensity * delta.Seconds()
+		ent.AddVelocity(entities.Vec3{
+			X: math.Cos(envState.Weather.WindDirection) * magnitude,
+			Y: math.Sin(envState.Weather.WindDirection) * magnitude,
+			Z: 0,
+		})
+	}
 	ent.Advance(delta)
 	if life, ok := ent.ReduceAttribute("projectile_life", delta.Seconds()); ok && life <= 0 {
 		s.handleProjectileImpact(ent)
@@ -217,7 +263,7 @@ func (s *Server) tickProjectile(ent *entities.Entity, delta time.Duration, physi
 	}
 }
 
-func (s *Server) tickUnit(ent *entities.Entity, delta time.Duration, physics entities.PhysicsParams) {
+func (s *Server) tickUnit(ent *entities.Entity, delta time.Duration, physics entities.PhysicsParams, envState environment.State) {
 	if value, ok := ent.Attribute("migration_pending"); ok && value > 0 {
 		return
 	}
@@ -227,9 +273,51 @@ func (s *Server) tickUnit(ent *entities.Entity, delta time.Duration, physics ent
 	} else {
 		ent.ApplyDrag(physics, delta)
 	}
+	if envState.Behavior.MobilityScale > 0 && envState.Behavior.MobilityScale < 1.0 {
+		ent.ScaleVelocity(envState.Behavior.MobilityScale)
+	}
 	ent.Advance(delta)
 	ent.ClampZ(0)
+	if envState.Behavior.VisibilityScale > 0 {
+		ent.SetAttributeIfDifferent("environment_visibility", envState.Behavior.VisibilityScale, 1e-3)
+	}
+	ent.SetAttributeIfDifferent("environment_morale", envState.Behavior.MoraleShift, 1e-3)
+	ent.SetAttributeIfDifferent("environment_phase", float64(envPhaseToInt(envState.Phase)), 0)
 	s.updateEntityChunk(ent)
+}
+
+func envPhaseToInt(p environment.Phase) int {
+	switch p {
+	case environment.PhaseDawn:
+		return 1
+	case environment.PhaseDay:
+		return 2
+	case environment.PhaseDusk:
+		return 3
+	case environment.PhaseNight:
+		return 4
+	default:
+		return 0
+	}
+}
+
+func (s *Server) EnvironmentState() environment.State {
+	s.envMu.RLock()
+	defer s.envMu.RUnlock()
+	return s.envState
+}
+
+func convertEnvironmentConfig(cfg config.EnvironmentConfig) environment.Config {
+	return environment.Config{
+		DayLength:          cfg.DayLength,
+		WeatherMinDuration: cfg.WeatherMinDuration,
+		WeatherMaxDuration: cfg.WeatherMaxDuration,
+		StormChance:        cfg.StormChance,
+		RainChance:         cfg.RainChance,
+		WindBase:           cfg.WindBase,
+		WindVariance:       cfg.WindVariance,
+		Seed:               cfg.Seed,
+	}
 }
 
 func (s *Server) handleProjectileImpact(ent *entities.Entity) {

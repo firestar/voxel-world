@@ -27,6 +27,7 @@ Chunk server prototype for the RTS voxel engine. Handles chunk ownership, entity
 - `internal/pathfinding`: chunk-level A* navigator for cross-server routing.
 - `internal/network`: UDP protocol envelopes and lightweight message bus.
 - `internal/server`: main orchestration loop that glues everything together.
+- `internal/environment`: day/night and weather controller that feeds physics and lighting modifiers into the server loop.
 
 ## Running (local)
 
@@ -87,6 +88,10 @@ chunk_servers:
 
 Clients can query `GET /lookup?x=<blockX>&y=<blockY>` on the central service to discover the appropriate chunk server endpoint for a given world coordinate.
 
+### Environment Simulation
+
+The chunk server owns a lightweight environment simulator that advances a configurable day/night cycle and probabilistic weather patterns. The current state influences ambient lighting published by the world manager, physics coefficients used by the entity tickers (gravity, drag, friction), and per-entity behaviour attributes (visibility, morale, mobility throttling). Defaults provide a 20-minute solar cycle with clear, rain, and storm states that blend into entity physics automatically.
+
 ### Entity Migration
 
 Chunk servers automatically queue entity migrations when units cross server boundaries. Once a neighbor handshake completes, the owning server serialises the entity state and issues a `transferRequest` to the adjacent chunk server. The receiving server reconstructs the entity, acknowledges the move, and the local server removes the migrated unit after a successful ack. Entities tagged with `migration_pending` pause simulation until the transfer completes or is retried.
@@ -118,6 +123,15 @@ Chunk servers automatically queue entity migrations when units cross server boun
     "neighborEndpoints": [
       {"chunkDelta": {"x": 32, "y": 0}, "endpoint": "127.0.0.1:19100"}
     ]
+  },
+  "environment": {
+    "dayLength": "20m",
+    "weatherMinDuration": "2m",
+    "weatherMaxDuration": "5m",
+    "stormChance": 0.15,
+    "rainChance": 0.35,
+    "windBase": 3.0,
+    "windVariance": 5.0
   }
 }
 ```
