@@ -19,18 +19,50 @@ type Manager struct {
 
 	mu     sync.RWMutex
 	chunks map[ChunkCoord]*Chunk
+
+	lighting   LightingState
+	lightingMu sync.RWMutex
 }
 
 func NewManager(region ServerRegion, generator Generator) *Manager {
 	return &Manager{
-		region:   region,
+		region:    region,
 		generator: generator,
-		chunks:   make(map[ChunkCoord]*Chunk),
+		chunks:    make(map[ChunkCoord]*Chunk),
+		lighting:  DefaultLighting(),
 	}
 }
 
 func (m *Manager) Region() ServerRegion {
 	return m.region
+}
+
+type LightingState struct {
+	Ambient     float64
+	SunAngle    float64
+	FogDensity  float64
+	WeatherTint float64
+}
+
+func DefaultLighting() LightingState {
+	return LightingState{
+		Ambient:     1.0,
+		SunAngle:    0,
+		FogDensity:  0,
+		WeatherTint: 0,
+	}
+}
+
+func (m *Manager) SetLighting(state LightingState) {
+	m.lightingMu.Lock()
+	m.lighting = state
+	m.lightingMu.Unlock()
+}
+
+func (m *Manager) Lighting() LightingState {
+	m.lightingMu.RLock()
+	defer m.lightingMu.RUnlock()
+	return m.lighting
 }
 
 func (m *Manager) Chunk(ctx context.Context, coord ChunkCoord) (*Chunk, error) {
