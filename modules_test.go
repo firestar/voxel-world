@@ -21,7 +21,11 @@ func TestSubmoduleTestSuites(t *testing.T) {
 		t.Run(module.name, func(t *testing.T) {
 			cmd := exec.Command("go", "test", "./...")
 			cmd.Dir = filepath.Join(".", module.dir)
-			cmd.Env = append(os.Environ(), "GOWORK=off")
+			cmd.Env = append(os.Environ(),
+				"GOWORK=off",
+				"GOPROXY=off",
+				"GOSUMDB=off",
+			)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go test ./... in %s failed: %v\n%s", module.dir, err, output)
