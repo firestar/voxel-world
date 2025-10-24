@@ -19,6 +19,7 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 - Central orchestrator configuration and README describe multi-server setups and lookup endpoints.
 - Chunk servers prefetch chunk summaries for the entered chunk and its adjacent neighbors when entities cross chunk boundaries, reducing client hitching when players explore new regions.
 - Movement simulation now runs on a dedicated worker that can scale across multiple threads and hands off entity/projectile velocity to neighboring servers when they exit a chunk.
+- Chunk servers coordinate role-based squads through a new AI layer that maintains dynamic formations, plans cross-chunk construction efforts, and annotates entity intent so neighboring servers can anticipate incoming support.
 - Automated tests cover movement engine timing (tick clamping and worker usage) alongside pathfinding constraints to ensure generated routes remain passable and avoid blocked endpoints.
 - A configurable environment simulator advances day/night lighting, transitions between clear/rain/storm weather, and injects physics plus behaviour modifiers into entity updates; lighting is published through the world manager for downstream consumers.
 - README documentation references orchestrator usage and notes that `project_context.md` must be kept current.

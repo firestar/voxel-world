@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"chunkserver/internal/ai"
 	"chunkserver/internal/config"
 	"chunkserver/internal/entities"
 	"chunkserver/internal/environment"
@@ -30,6 +31,8 @@ type Server struct {
 	env       *environment.Environment
 
 	movementWorkers int
+
+	ai *ai.Coordinator
 
 	chunkCursor       world.LocalChunkIndex
 	streamSeq         uint64
@@ -99,6 +102,22 @@ func New(cfg *config.Config) (*Server, error) {
 		inFlightTransfers: make(map[entities.ID]migration.Request),
 		envState:          initialEnv,
 	}
+	var lookup ai.NeighborLookup
+	if srv.neighbors != nil {
+		lookup = func(chunk world.ChunkCoord) (ai.NeighborOwnership, bool) {
+			info, ok := srv.neighbors.ownership(chunk)
+			if !ok {
+				return ai.NeighborOwnership{}, false
+			}
+			return ai.NeighborOwnership{
+				ServerID:     info.serverID,
+				Endpoint:     info.endpoint,
+				RegionOrigin: info.origin,
+				RegionSize:   info.size,
+			}, true
+		}
+	}
+	srv.ai = ai.NewCoordinator(region, entityManager, navigator, lookup)
 	srv.world.SetLighting(world.LightingState{
 		Ambient:     initialEnv.Lighting.Ambient,
 		SunAngle:    initialEnv.Lighting.SunAngle,
@@ -175,6 +194,8 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) tickEntities(delta time.Duration, workers int) {
+	if s.ai != nil {
+		s.ai.Tick(delta)
 	var envState environment.State
 	if s.env != nil {
 		envState = s.env.Step(delta)

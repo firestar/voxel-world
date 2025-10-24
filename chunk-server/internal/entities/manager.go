@@ -129,6 +129,17 @@ func (m *Manager) MutableByChunk(coord world.ChunkCoord) []*Entity {
 	return out
 }
 
+// ActiveChunks returns the set of chunk coordinates that currently host entities.
+func (m *Manager) ActiveChunks() []world.ChunkCoord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	coords := make([]world.ChunkCoord, 0, len(m.byChunk))
+	for coord := range m.byChunk {
+		coords = append(coords, coord)
+	}
+	return coords
+}
+
 // Apply executes fn for every entity and returns snapshots of those that became dirty or dying.
 func (m *Manager) Apply(fn func(*Entity)) []Entity {
 	return m.ApplyConcurrent(1, fn)
