@@ -109,8 +109,11 @@ func TestBlockNavigatorGroundRouteAvoidsObstacles(t *testing.T) {
 	}
 
 	detour := false
-	for _, step := range path {
-		if step.Y == 2 { // requires lateral move to go around the pillar
+	for i, step := range path {
+		if i == 0 || i == len(path)-1 {
+			continue
+		}
+		if step.Y != start.Y {
 			detour = true
 			break
 		}

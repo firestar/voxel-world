@@ -196,6 +196,7 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) tickEntities(delta time.Duration, workers int) {
 	if s.ai != nil {
 		s.ai.Tick(delta)
+	}
 	var envState environment.State
 	if s.env != nil {
 		envState = s.env.Step(delta)
