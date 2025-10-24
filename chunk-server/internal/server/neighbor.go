@@ -34,6 +34,13 @@ type neighborTarget struct {
 	Endpoint string
 }
 
+type neighborOwnership struct {
+	serverID string
+	endpoint string
+	origin   world.ChunkCoord
+	size     int
+}
+
 func newNeighborManager(region world.ServerRegion, refs []config.NeighborRef) *neighborManager {
 	m := &neighborManager{
 		region:    region,
@@ -198,4 +205,29 @@ func (info *neighborInfo) endpoint() string {
 		return info.listen
 	}
 	return info.remoteAddr
+}
+
+func (m *neighborManager) ownership(chunk world.ChunkCoord) (neighborOwnership, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, info := range m.neighbors {
+		if !info.connected {
+			continue
+		}
+		size := info.regionSize
+		if size == 0 {
+			size = m.region.ChunksPerAxis
+		}
+		origin := info.regionOrigin
+		if chunk.X >= origin.X && chunk.X < origin.X+size &&
+			chunk.Y >= origin.Y && chunk.Y < origin.Y+size {
+			return neighborOwnership{
+				serverID: info.serverID,
+				endpoint: info.endpoint(),
+				origin:   origin,
+				size:     size,
+			}, true
+		}
+	}
+	return neighborOwnership{}, false
 }

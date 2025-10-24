@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"chunkserver/internal/ai"
 	"chunkserver/internal/config"
 	"chunkserver/internal/entities"
 	"chunkserver/internal/migration"
@@ -28,6 +29,8 @@ type Server struct {
 	logger    *log.Logger
 
 	movementWorkers int
+
+	ai *ai.Coordinator
 
 	chunkCursor       world.LocalChunkIndex
 	streamSeq         uint64
@@ -88,6 +91,22 @@ func New(cfg *config.Config) (*Server, error) {
 		migrationQueue:    migration.NewQueue(),
 		inFlightTransfers: make(map[entities.ID]migration.Request),
 	}
+	var lookup ai.NeighborLookup
+	if srv.neighbors != nil {
+		lookup = func(chunk world.ChunkCoord) (ai.NeighborOwnership, bool) {
+			info, ok := srv.neighbors.ownership(chunk)
+			if !ok {
+				return ai.NeighborOwnership{}, false
+			}
+			return ai.NeighborOwnership{
+				ServerID:     info.serverID,
+				Endpoint:     info.endpoint,
+				RegionOrigin: info.origin,
+				RegionSize:   info.size,
+			}, true
+		}
+	}
+	srv.ai = ai.NewCoordinator(region, entityManager, navigator, lookup)
 	srv.registerHandlers()
 	return srv, nil
 }
@@ -158,6 +177,9 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) tickEntities(delta time.Duration, workers int) {
+	if s.ai != nil {
+		s.ai.Tick(delta)
+	}
 	physics := entities.PhysicsParams{
 		Gravity:         9.8,
 		AirDrag:         0.4,
