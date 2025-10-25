@@ -1,0 +1,55 @@
+name: Build Server Binaries
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ''
+          - goos: darwin
+            goarch: amd64
+            ext: ''
+          - goos: windows
+            goarch: amd64
+            ext: '.exe'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build central server
+        working-directory: central
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p ../dist/${{ matrix.goos }}-${{ matrix.goarch }}
+          go build -o ../dist/${{ matrix.goos }}-${{ matrix.goarch }}/central${{ matrix.ext }} ./cmd/central
+
+      - name: Build chunk server
+        working-directory: chunk-server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p ../dist/${{ matrix.goos }}-${{ matrix.goarch }}
+          go build -o ../dist/${{ matrix.goos }}-${{ matrix.goarch }}/chunk-server${{ matrix.ext }} ./cmd/chunkserver
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: voxel-world-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/${{ matrix.goos }}-${{ matrix.goarch }}
