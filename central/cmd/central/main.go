@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -19,7 +20,16 @@ func main() {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := config.WriteDefault(configPath); err != nil {
+				log.Fatalf("write default config: %v", err)
+			}
+			log.Printf("no configuration found, default configuration written to %s", configPath)
+			cfg, err = config.Load(configPath)
+		}
+		if err != nil {
+			log.Fatalf("load config: %v", err)
+		}
 	}
 
 	ctx, cancel := signalContext(context.Background())
