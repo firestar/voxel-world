@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "lib": ["ES2021"],
+    "outDir": "dist/preload",
+    "rootDir": "src",
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    }
+  },
+  "include": ["src/preload/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/renderer", "dist", "node_modules"]
+}
