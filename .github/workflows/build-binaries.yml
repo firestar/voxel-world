@@ -53,3 +53,53 @@ jobs:
         with:
           name: voxel-world-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/${{ matrix.goos }}-${{ matrix.goarch }}
+
+  release:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat version.txt)
+          VERSION=$(echo "$VERSION" | tr -d '\n' | tr -d '\r')
+          if [ -z "$VERSION" ]; then
+            echo "version.txt is empty" >&2
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: voxel-world-*
+          path: release-assets
+
+      - name: Collect asset list
+        id: assets
+        run: |
+          if [ ! -d release-assets ]; then
+            echo "No artifacts downloaded" >&2
+            exit 1
+          fi
+          {
+            echo 'files<<EOF'
+            find release-assets -type f
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.value }}
+          name: ${{ steps.version.outputs.value }}
+          files: ${{ steps.assets.outputs.files }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
