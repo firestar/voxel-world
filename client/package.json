@@ -47,6 +47,7 @@
       "dist/main/**/*",
       "dist/preload/**/*",
       "dist/renderer/**/*",
+      "dist/shared/**/*",
       "package.json"
     ],
     "extraMetadata": {

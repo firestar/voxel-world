@@ -4,7 +4,7 @@ import {
   ChunkSummaryEvent,
   ConnectionState,
   JoinResult
-} from '@shared/protocol';
+} from '../shared/protocol';
 
 type Listener<T> = (event: T) => void;
 

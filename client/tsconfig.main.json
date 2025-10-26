@@ -3,13 +3,9 @@
   "compilerOptions": {
     "module": "CommonJS",
     "lib": ["ES2021"],
-    "outDir": "dist/main",
+    "outDir": "dist",
     "rootDir": "src",
-    "moduleResolution": "node",
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["src/shared/*"]
-    }
+    "moduleResolution": "node"
   },
   "include": ["src/main/**/*.ts", "src/shared/**/*.ts"],
   "exclude": ["src/renderer", "dist", "node_modules"]

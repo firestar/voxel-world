@@ -11,7 +11,7 @@ import {
   MessageType,
   encodeEnvelope,
   parseEnvelope
-} from '@shared/protocol';
+} from '../shared/protocol';
 
 type ActiveStream = {
   socket: dgram.Socket;

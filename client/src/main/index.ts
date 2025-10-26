@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { URL } from 'url';
 import { ChunkNetworkManager } from './networking';
-import { ConnectionState } from '@shared/protocol';
+import { ConnectionState } from '../shared/protocol';
 
 let mainWindow: BrowserWindow | null = null;
 const chunkManager = new ChunkNetworkManager();
