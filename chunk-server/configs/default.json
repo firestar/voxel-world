@@ -1,0 +1,70 @@
+{
+  "server": {
+    "id": "chunk-server-0",
+    "description": "local development chunk server",
+    "globalChunkOrigin": {"x": 0, "y": 0},
+    "tickRate": "33ms",
+    "stateStreamRate": "200ms",
+    "entityStreamRate": "50ms",
+    "maxConcurrentLoads": 4
+  },
+  "chunk": {
+    "width": 512,
+    "depth": 512,
+    "height": 2048,
+    "chunksPerAxis": 32
+  },
+  "network": {
+    "listenUdp": ":19000",
+    "mainServerEndpoints": ["127.0.0.1:20000"],
+    "neighborEndpoints": [],
+    "handshakeTimeout": "3s",
+    "keepAliveInterval": "5s",
+    "maxDatagramSizeBytes": 65536,
+    "discoveryInterval": "10s",
+    "transferRetry": "2s"
+  },
+  "pathfinding": {
+    "maxSearchNodes": 50000,
+    "heuristicScale": 1.0,
+    "asyncWorkers": 4,
+    "throttlePerSecond": 120,
+    "queueTimeout": "250ms"
+  },
+  "terrain": {
+    "seed": 1337,
+    "frequency": 0.003,
+    "amplitude": 512,
+    "octaves": 4,
+    "persistence": 0.45,
+    "lacunarity": 2.0
+  },
+  "economy": {
+    "resourceSpawnDensity": {
+      "steel": 0.9,
+      "uranium": 0.25,
+      "plastanium": 0.4,
+      "vibranium": 0.1,
+      "electronium": 0.15,
+      "foodium": 0.6
+    },
+    "miningLevelGrowth": 1.15,
+    "baseMiningRate": 3.0
+  },
+  "entities": {
+    "maxEntitiesPerChunk": 4096,
+    "entityTickRate": "33ms",
+    "projectileTickRate": "16ms",
+    "movementWorkers": 1
+  },
+  "environment": {
+    "dayLength": "20m",
+    "weatherMinDuration": "2m",
+    "weatherMaxDuration": "5m",
+    "stormChance": 0.15,
+    "rainChance": 0.35,
+    "windBase": 3.0,
+    "windVariance": 5.0,
+    "seed": 1337
+  }
+}

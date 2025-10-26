@@ -5,8 +5,8 @@ world:
   chunk_depth: 512
   chunk_height: 2048
 cluster:
-  default_binary: ../chunk-server/cmd/chunkserver/chunkserver
-  data_root: ./data
+  default_binary: /usr/local/bin/chunkserver
+  data_root: /var/lib/central
   env:
     CHUNK_LOG_LEVEL: INFO
 chunk_servers:
@@ -19,9 +19,9 @@ chunk_servers:
       chunks_y: 32
     args:
       - "--config"
-      - "configs/chunk-east.json"
-    listen_address: 127.0.0.1:19000
-    http_address: http://127.0.0.1:19001
+      - "/etc/central/configs/chunk-east.json"
+    listen_address: 0.0.0.0:19000
+    http_address: http://chunk-east-0:19001
   - id: chunk-west-0
     global_origin:
       chunk_x: 32
@@ -31,9 +31,9 @@ chunk_servers:
       chunks_y: 32
     args:
       - "--config"
-      - "configs/chunk-west.json"
-    listen_address: 127.0.0.1:19100
-    http_address: http://127.0.0.1:19101
+      - "/etc/central/configs/chunk-west.json"
+    listen_address: 0.0.0.0:19100
+    http_address: http://chunk-west-0:19101
 player_api:
   enabled: true
   base_url: https://api.example.com
