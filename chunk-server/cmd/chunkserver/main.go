@@ -18,6 +18,14 @@ func main() {
 	flag.StringVar(&cfgPath, "config", "", "path to chunk server configuration file")
 	flag.Parse()
 
+	wroteConfig, err := writeConfigFromCentral(cfgPath)
+	if err != nil {
+		log.Fatalf("synchronise config from central: %v", err)
+	}
+	if wroteConfig {
+		log.Printf("wrote configuration received from central to %s", cfgPath)
+	}
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
