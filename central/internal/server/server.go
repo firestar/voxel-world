@@ -16,15 +16,18 @@ import (
 )
 
 type Server struct {
-	cfg       *config.Config
-	cluster   *cluster.Manager
-	index     *worldmap.Index
-	httpSrv   *http.Server
-	logger    *log.Logger
+	cfg     *config.Config
+	cluster *cluster.Manager
+	index   *worldmap.Index
+	httpSrv *http.Server
+	logger  *log.Logger
 }
 
 func New(cfg *config.Config) (*Server, error) {
-	manager := cluster.New(cfg)
+	manager, err := cluster.New(cfg)
+	if err != nil {
+		return nil, err
+	}
 	index := worldmap.NewIndex()
 	index.LoadFromConfig(cfg)
 	s := &Server{

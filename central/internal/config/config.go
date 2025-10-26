@@ -23,14 +23,15 @@ type ClusterConfig struct {
 }
 
 type ChunkServer struct {
-	ID            string            `yaml:"id"`
-	GlobalOrigin  ChunkOrigin       `yaml:"global_origin"`
-	ChunkSpan     ChunkSpan         `yaml:"chunk_span"`
-	Executable    string            `yaml:"executable"`
-	Args          []string          `yaml:"args"`
-	Env           map[string]string `yaml:"env"`
-	ListenAddress string            `yaml:"listen_address"`
-	HttpAddress   string            `yaml:"http_address"`
+	ID             string            `yaml:"id"`
+	GlobalOrigin   ChunkOrigin       `yaml:"global_origin"`
+	ChunkSpan      ChunkSpan         `yaml:"chunk_span"`
+	Executable     string            `yaml:"executable"`
+	ContainerImage string            `yaml:"container_image"`
+	Args           []string          `yaml:"args"`
+	Env            map[string]string `yaml:"env"`
+	ListenAddress  string            `yaml:"listen_address"`
+	HttpAddress    string            `yaml:"http_address"`
 }
 
 type ChunkOrigin struct {
@@ -89,7 +90,7 @@ func (c *Config) Validate() error {
 		if cs.ChunkSpan.ChunksX <= 0 || cs.ChunkSpan.ChunksY <= 0 {
 			return fmt.Errorf("chunk_servers[%d] chunk span must be positive", i)
 		}
-		if cs.Executable == "" {
+		if cs.Executable == "" && cs.ContainerImage == "" {
 			if c.Cluster.DefaultBinary == "" {
 				return fmt.Errorf("chunk_servers[%d].executable empty and no cluster.default_binary provided", i)
 			}

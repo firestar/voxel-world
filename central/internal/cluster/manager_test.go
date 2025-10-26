@@ -16,7 +16,7 @@ import (
 )
 
 func TestStartAllMergesEnvironment(t *testing.T) {
-	t.Parallel()
+	t.Setenv("CENTRAL_CLUSTER_MODE", "local")
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "env.txt")
@@ -44,7 +44,10 @@ func TestStartAllMergesEnvironment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mgr := New(cfg)
+	mgr, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 	if err := mgr.StartAll(ctx); err != nil {
 		t.Fatalf("StartAll() error = %v", err)
 	}
@@ -85,7 +88,7 @@ func TestStartAllMergesEnvironment(t *testing.T) {
 }
 
 func TestStartAllProvidesConfigPayload(t *testing.T) {
-	t.Parallel()
+	t.Setenv("CENTRAL_CLUSTER_MODE", "local")
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "payload.txt")
@@ -123,7 +126,10 @@ func TestStartAllProvidesConfigPayload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mgr := New(cfg)
+	mgr, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 	if err := mgr.StartAll(ctx); err != nil {
 		t.Fatalf("StartAll() error = %v", err)
 	}
@@ -187,7 +193,7 @@ func TestStartAllProvidesConfigPayload(t *testing.T) {
 }
 
 func TestProcessesReportsExitStatus(t *testing.T) {
-	t.Parallel()
+	t.Setenv("CENTRAL_CLUSTER_MODE", "local")
 
 	cfg := &config.Config{
 		ChunkServers: []config.ChunkServer{
@@ -202,7 +208,10 @@ func TestProcessesReportsExitStatus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mgr := New(cfg)
+	mgr, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 	if err := mgr.StartAll(ctx); err != nil {
 		t.Fatalf("StartAll() error = %v", err)
 	}
