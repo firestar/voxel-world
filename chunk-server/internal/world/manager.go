@@ -20,6 +20,8 @@ type Manager struct {
 	mu     sync.RWMutex
 	chunks map[ChunkCoord]*Chunk
 
+	pending map[ChunkCoord]*chunkFuture
+
 	lighting   LightingState
 	lightingMu sync.RWMutex
 }
@@ -29,6 +31,7 @@ func NewManager(region ServerRegion, generator Generator) *Manager {
 		region:    region,
 		generator: generator,
 		chunks:    make(map[ChunkCoord]*Chunk),
+		pending:   make(map[ChunkCoord]*chunkFuture),
 		lighting:  DefaultLighting(),
 	}
 }
@@ -70,30 +73,146 @@ func (m *Manager) Chunk(ctx context.Context, coord ChunkCoord) (*Chunk, error) {
 		return nil, fmt.Errorf("chunk %v outside server region", coord)
 	}
 
-	m.mu.RLock()
-	ch, ok := m.chunks[coord]
-	m.mu.RUnlock()
-	if ok {
+	if ch, ok := m.cachedChunk(coord); ok {
 		return ch, nil
 	}
 
+	future, err := m.ensureChunkFuture(ctx, coord)
+	if err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-future.ready:
+		if future.err != nil {
+			return nil, future.err
+		}
+		return future.chunk, nil
+	}
+}
+
+func (m *Manager) ChunkIfReady(coord ChunkCoord) (*Chunk, bool, error) {
+	if !m.region.ContainsGlobalChunk(coord) {
+		return nil, false, fmt.Errorf("chunk %v outside server region", coord)
+	}
+
+	if ch, ok := m.cachedChunk(coord); ok {
+		return ch, true, nil
+	}
+
+	future, err := m.ensureChunkFuture(context.Background(), coord)
+	if err != nil {
+		return nil, false, err
+	}
+
+	select {
+	case <-future.ready:
+		if future.err != nil {
+			return nil, false, future.err
+		}
+		return future.chunk, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+func (m *Manager) EnsureChunk(coord ChunkCoord) error {
+	if !m.region.ContainsGlobalChunk(coord) {
+		return fmt.Errorf("chunk %v outside server region", coord)
+	}
+	_, err := m.ensureChunkFuture(context.Background(), coord)
+	return err
+}
+
+func (m *Manager) cachedChunk(coord ChunkCoord) (*Chunk, bool) {
+	m.mu.RLock()
+	ch, ok := m.chunks[coord]
+	m.mu.RUnlock()
+	return ch, ok
+}
+
+func (m *Manager) ensureChunkFuture(ctx context.Context, coord ChunkCoord) (*chunkFuture, error) {
+	m.mu.Lock()
+	if ch, ok := m.chunks[coord]; ok {
+		m.mu.Unlock()
+		future := readyChunkFuture(ch)
+		return future, nil
+	}
+	if future, ok := m.pending[coord]; ok {
+		m.mu.Unlock()
+		return future, nil
+	}
+	future := newChunkFuture()
+	m.pending[coord] = future
+	m.mu.Unlock()
+
 	bounds, err := m.region.ChunkBounds(coord)
 	if err != nil {
-		return nil, err
+		m.finishChunkFuture(coord, nil, err)
+		return future, err
 	}
 
-	ch, err = m.generator.Generate(ctx, coord, bounds, m.region.ChunkDimension)
+	go m.generateChunk(contextWithoutCancel(ctx), coord, bounds, future)
+	return future, nil
+}
+
+func (m *Manager) generateChunk(ctx context.Context, coord ChunkCoord, bounds Bounds, future *chunkFuture) {
+	chunk, err := m.generator.Generate(ctx, coord, bounds, m.region.ChunkDimension)
 	if err != nil {
-		return nil, err
+		m.finishChunkFuture(coord, nil, err)
+		return
 	}
+	m.finishChunkFuture(coord, chunk, nil)
+}
 
+func (m *Manager) finishChunkFuture(coord ChunkCoord, chunk *Chunk, genErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if existing, ok := m.chunks[coord]; ok {
-		return existing, nil
+	if chunk != nil {
+		if existing, ok := m.chunks[coord]; ok {
+			chunk = existing
+		} else {
+			m.chunks[coord] = chunk
+		}
 	}
-	m.chunks[coord] = ch
-	return ch, nil
+	if future, ok := m.pending[coord]; ok {
+		delete(m.pending, coord)
+		future.complete(chunk, genErr)
+	}
+}
+
+func contextWithoutCancel(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
+type chunkFuture struct {
+	ready chan struct{}
+	chunk *Chunk
+	err   error
+	once  sync.Once
+}
+
+func newChunkFuture() *chunkFuture {
+	return &chunkFuture{ready: make(chan struct{})}
+}
+
+func readyChunkFuture(chunk *Chunk) *chunkFuture {
+	future := newChunkFuture()
+	future.complete(chunk, nil)
+	return future
+}
+
+func (f *chunkFuture) complete(chunk *Chunk, err error) {
+	f.once.Do(func() {
+		f.chunk = chunk
+		f.err = err
+		close(f.ready)
+	})
 }
 
 func (m *Manager) ChunkForBlock(ctx context.Context, block BlockCoord) (*Chunk, error) {

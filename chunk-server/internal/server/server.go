@@ -652,6 +652,12 @@ func (s *Server) prefetchChunkNeighborhood(center world.ChunkCoord) {
 		}
 	}
 
+	for _, coord := range neighbors {
+		if err := s.world.EnsureChunk(coord); err != nil {
+			s.logger.Printf("ensure chunk %v: %v", coord, err)
+		}
+	}
+
 	s.markChunksDirty(neighbors)
 }
 
@@ -761,9 +767,13 @@ func (s *Server) broadcastChunkSummaries(ctx context.Context) {
 }
 
 func (s *Server) sendChunkSummary(ctx context.Context, coord world.ChunkCoord) error {
-	chunk, err := s.world.Chunk(ctx, coord)
+	chunk, ready, err := s.world.ChunkIfReady(coord)
 	if err != nil {
 		return err
+	}
+	if !ready {
+		s.markChunksDirty([]world.ChunkCoord{coord})
+		return nil
 	}
 
 	summary := network.ChunkSummary{

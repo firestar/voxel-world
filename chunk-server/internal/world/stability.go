@@ -81,13 +81,13 @@ func evaluateColumnStability(chunk *Chunk, localX, localY int) ([]StabilityRepor
 		chainPenalty := 1.0
 		for z := 0; z < dim.Height; z++ {
 			node := &nodes[z]
-		if !node.present {
-			if !node.collapsed {
-				node.lastSupport = 0
-				node.hanging = false
-				node.chainDepth = 0
-			}
-			node.nextStable = false
+			if !node.present {
+				if !node.collapsed {
+					node.lastSupport = 0
+					node.hanging = false
+					node.chainDepth = 0
+				}
+				node.nextStable = false
 				chainDepth = 0
 				chainPenalty = 1.0
 				continue
