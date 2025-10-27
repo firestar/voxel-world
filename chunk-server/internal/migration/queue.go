@@ -27,11 +27,20 @@ func (q *Queue) Drain(max int) []Request {
 	}
 	if max <= 0 || max >= len(q.pending) {
 		batch := append([]Request(nil), q.pending...)
-		q.pending = q.pending[:0]
+		for i := range q.pending {
+			q.pending[i] = Request{}
+		}
+		q.pending = nil
 		return batch
 	}
 	batch := append([]Request(nil), q.pending[:max]...)
-	q.pending = q.pending[max:]
+	for i := 0; i < max; i++ {
+		q.pending[i] = Request{}
+	}
+	remaining := q.pending[max:]
+	// Copy the remaining requests into a new slice so that the queue does not retain
+	// references to the drained entries, allowing them to be garbage collected.
+	q.pending = append([]Request(nil), remaining...)
 	return batch
 }
 
