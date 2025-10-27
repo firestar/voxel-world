@@ -23,6 +23,7 @@ type Request struct {
 	TargetServer   string
 	TargetEndpoint string
 	QueuedAt       time.Time
+	LastAttempt    time.Time
 	Reason         string
 	Nonce          uint64
 }
