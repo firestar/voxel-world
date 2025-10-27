@@ -2,6 +2,7 @@ package terrain
 
 import (
 	"context"
+	"log"
 	"math"
 
 	"chunkserver/internal/config"
@@ -30,6 +31,18 @@ func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *
 func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, bounds world.Bounds, dim world.Dimensions) (*world.Chunk, error) {
 	chunk := world.NewChunk(coord, bounds, dim)
 
+	totalColumns := dim.Width * dim.Depth
+	if totalColumns <= 0 {
+		log.Printf("chunk %v generation progress: 100%%", coord)
+		return chunk, nil
+	}
+
+	log.Printf("chunk %v generation progress: 0%%", coord)
+
+	generatedColumns := 0
+	nextLogPercent := 10
+	loggedComplete := false
+
 	for x := 0; x < dim.Width; x++ {
 		for y := 0; y < dim.Depth; y++ {
 			if ctx.Err() != nil {
@@ -45,7 +58,26 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 
 			g.populateColumn(chunk, bounds, x, y, surfaceHeight, noise)
 			g.seedMinerals(chunk, x, y, globalX, globalY, bounds, dim, surfaceHeight)
+
+			generatedColumns++
+			progress := generatedColumns * 100 / totalColumns
+			if progress >= nextLogPercent {
+				if progress > 100 {
+					progress = 100
+				}
+				log.Printf("chunk %v generation progress: %d%%", coord, progress)
+				if progress >= 100 {
+					loggedComplete = true
+					nextLogPercent = 110
+				} else {
+					nextLogPercent = ((progress / 10) + 1) * 10
+				}
+			}
 		}
+	}
+
+	if !loggedComplete {
+		log.Printf("chunk %v generation progress: 100%%", coord)
 	}
 
 	return chunk, nil
