@@ -14,10 +14,10 @@ import (
 type Handler func(ctx context.Context, addr *net.UDPAddr, env Envelope)
 
 type Server struct {
-	conn     *net.UDPConn
-	logger   *log.Logger
-	maxSize  int
-	seq      atomic.Uint64
+	conn    *net.UDPConn
+	logger  *log.Logger
+	maxSize int
+	seq     atomic.Uint64
 
 	mu       sync.RWMutex
 	handlers map[MessageType][]Handler

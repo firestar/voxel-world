@@ -108,7 +108,7 @@ func (r ServerRegion) ChunkBounds(global ChunkCoord) (Bounds, error) {
 func (r ServerRegion) LocateBlock(block BlockCoord) (ChunkCoord, bool) {
 	if block.Z < 0 || block.Z >= r.ChunkDimension.Height {
 		return ChunkCoord{}, false
-}
+	}
 	chunk := ChunkCoord{
 		X: floorDiv(block.X, r.ChunkDimension.Width),
 		Y: floorDiv(block.Y, r.ChunkDimension.Depth),
