@@ -421,6 +421,7 @@ func (s *Server) processMigrationQueue() {
 	if s.migrationQueue == nil {
 		return
 	}
+	s.retryStaleTransfers(time.Now())
 	batch := s.migrationQueue.Drain(8)
 	for _, req := range batch {
 		if _, exists := s.inFlightTransfers[req.EntityID]; exists {
@@ -447,6 +448,7 @@ func (s *Server) sendMigrationRequest(req migration.Request) error {
 		state.Attributes = make(map[string]float64)
 	}
 	state.Attributes["migration_pending"] = 1
+	attempt := time.Now()
 	nonce := s.nextTransferNonce()
 	msg := network.TransferRequest{
 		EntityID:     string(req.EntityID),
@@ -457,14 +459,39 @@ func (s *Server) sendMigrationRequest(req migration.Request) error {
 		Reason:       req.Reason,
 		State:        state,
 		Nonce:        nonce,
-		Timestamp:    time.Now().UTC(),
+		Timestamp:    attempt.UTC(),
 	}
 	if err := s.net.Send(req.TargetEndpoint, network.MessageTransferRequest, msg); err != nil {
 		return err
 	}
 	req.Nonce = nonce
+	req.LastAttempt = attempt
 	s.inFlightTransfers[req.EntityID] = req
 	return nil
+}
+
+func (s *Server) retryStaleTransfers(now time.Time) {
+	if s == nil || s.cfg == nil || s.migrationQueue == nil {
+		return
+	}
+	retry := s.cfg.Network.TransferRetry.Duration()
+	if retry <= 0 {
+		return
+	}
+	for id, req := range s.inFlightTransfers {
+		if req.LastAttempt.IsZero() {
+			continue
+		}
+		if now.Sub(req.LastAttempt) < retry {
+			continue
+		}
+		delete(s.inFlightTransfers, id)
+		req.Nonce = 0
+		req.LastAttempt = time.Time{}
+		req.QueuedAt = now
+		s.migrationQueue.Enqueue(req)
+		s.logger.Printf("migration: retrying transfer for entity %s after timeout", req.EntityID)
+	}
 }
 
 func (s *Server) discoverNeighbors(now time.Time) {
