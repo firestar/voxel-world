@@ -152,22 +152,22 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.announceToMainServers()
 
-	movement := newMovementEngine(s, s.cfg.Server.TickRate, s.movementWorkers)
+	movement := newMovementEngine(s, s.cfg.Server.TickRate.Duration(), s.movementWorkers)
 	movement.Start(ctx)
 	defer func() {
 		cancel()
 		movement.Wait()
 	}()
 
-	stateTicker := time.NewTicker(s.cfg.Server.StateStreamRate)
+	stateTicker := time.NewTicker(s.cfg.Server.StateStreamRate.Duration())
 	defer stateTicker.Stop()
 
-	entityTicker := time.NewTicker(s.cfg.Entities.EntityTickRate)
+	entityTicker := time.NewTicker(s.cfg.Entities.EntityTickRate.Duration())
 	defer entityTicker.Stop()
 
 	var discoveryTicker *time.Ticker
 	var discoveryC <-chan time.Time
-	if interval := s.cfg.Network.DiscoveryInterval; interval > 0 {
+	if interval := s.cfg.Network.DiscoveryInterval.Duration(); interval > 0 {
 		discoveryTicker = time.NewTicker(interval)
 		discoveryC = discoveryTicker.C
 		defer discoveryTicker.Stop()
@@ -310,9 +310,9 @@ func (s *Server) EnvironmentState() environment.State {
 
 func convertEnvironmentConfig(cfg config.EnvironmentConfig) environment.Config {
 	return environment.Config{
-		DayLength:          cfg.DayLength,
-		WeatherMinDuration: cfg.WeatherMinDuration,
-		WeatherMaxDuration: cfg.WeatherMaxDuration,
+		DayLength:          cfg.DayLength.Duration(),
+		WeatherMinDuration: cfg.WeatherMinDuration.Duration(),
+		WeatherMaxDuration: cfg.WeatherMaxDuration.Duration(),
 		StormChance:        cfg.StormChance,
 		RainChance:         cfg.RainChance,
 		WindBase:           cfg.WindBase,
@@ -471,7 +471,7 @@ func (s *Server) discoverNeighbors(now time.Time) {
 	if s.neighbors == nil {
 		return
 	}
-	targets := s.neighbors.discoveryTargets(now, s.cfg.Network.DiscoveryInterval)
+	targets := s.neighbors.discoveryTargets(now, s.cfg.Network.DiscoveryInterval.Duration())
 	if len(targets) == 0 {
 		return
 	}

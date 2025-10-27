@@ -9,6 +9,61 @@ import (
 	"time"
 )
 
+// Duration is a JSON-friendly wrapper around time.Duration that accepts human
+// readable strings such as "150ms" in configuration files while still
+// allowing numeric representations when necessary.
+type Duration time.Duration
+
+// Duration returns the underlying time.Duration value.
+func (d Duration) Duration() time.Duration {
+	return time.Duration(d)
+}
+
+// MarshalJSON encodes the duration using the canonical string representation.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
+// UnmarshalJSON decodes a duration from either a string (e.g. "250ms") or a
+// numeric value representing nanoseconds. Empty strings and null values decode
+// to zero.
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		return fmt.Errorf("duration: empty value")
+	}
+	if string(b) == "null" {
+		*d = 0
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return fmt.Errorf("duration: decode string: %w", err)
+		}
+		if s == "" {
+			*d = 0
+			return nil
+		}
+		parsed, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("duration: parse %q: %w", s, err)
+		}
+		*d = Duration(parsed)
+		return nil
+	}
+	var n int64
+	if err := json.Unmarshal(b, &n); err == nil {
+		*d = Duration(time.Duration(n))
+		return nil
+	}
+	var f float64
+	if err := json.Unmarshal(b, &f); err == nil {
+		*d = Duration(time.Duration(f))
+		return nil
+	}
+	return fmt.Errorf("duration: invalid value %s", string(b))
+}
+
 // Config captures the tunable parameters needed to bootstrap a chunk server.
 type Config struct {
 	Server      ServerConfig      `json:"server"`
@@ -22,13 +77,13 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	ID                 string        `json:"id"`
-	Description        string        `json:"description"`
-	GlobalChunkOrigin  ChunkIndex    `json:"globalChunkOrigin"`
-	TickRate           time.Duration `json:"tickRate"`           // e.g. "33ms"
-	StateStreamRate    time.Duration `json:"stateStreamRate"`    // frequency at which deltas are broadcast
-	EntityStreamRate   time.Duration `json:"entityStreamRate"`   // frequency for entity refreshes
-	MaxConcurrentLoads int           `json:"maxConcurrentLoads"` // simultaneous chunk mesh/generation jobs
+	ID                 string     `json:"id"`
+	Description        string     `json:"description"`
+	GlobalChunkOrigin  ChunkIndex `json:"globalChunkOrigin"`
+	TickRate           Duration   `json:"tickRate"`           // e.g. "33ms"
+	StateStreamRate    Duration   `json:"stateStreamRate"`    // frequency at which deltas are broadcast
+	EntityStreamRate   Duration   `json:"entityStreamRate"`   // frequency for entity refreshes
+	MaxConcurrentLoads int        `json:"maxConcurrentLoads"` // simultaneous chunk mesh/generation jobs
 }
 
 type ChunkConfig struct {
@@ -42,11 +97,11 @@ type NetworkConfig struct {
 	ListenUDP            string        `json:"listenUdp"`            // ":9000"
 	MainServerEndpoints  []string      `json:"mainServerEndpoints"`  // list of UDP endpoints to stream to
 	NeighborEndpoints    []NeighborRef `json:"neighborEndpoints"`    // optional explicit neighbor override
-	HandshakeTimeout     time.Duration `json:"handshakeTimeout"`     // e.g. "3s"
-	KeepAliveInterval    time.Duration `json:"keepAliveInterval"`    // periodic keep alive ping
+	HandshakeTimeout     Duration      `json:"handshakeTimeout"`     // e.g. "3s"
+	KeepAliveInterval    Duration      `json:"keepAliveInterval"`    // periodic keep alive ping
 	MaxDatagramSizeBytes int           `json:"maxDatagramSizeBytes"` // default to 64 KiB - UDP practical limit
-	DiscoveryInterval    time.Duration `json:"discoveryInterval"`    // how often to query for neighbors
-	TransferRetry        time.Duration `json:"transferRetry"`        // back-off for failed chunk transfers
+	DiscoveryInterval    Duration      `json:"discoveryInterval"`    // how often to query for neighbors
+	TransferRetry        Duration      `json:"transferRetry"`        // back-off for failed chunk transfers
 }
 
 type NeighborRef struct {
@@ -55,11 +110,11 @@ type NeighborRef struct {
 }
 
 type PathfindingConfig struct {
-	MaxSearchNodes    int           `json:"maxSearchNodes"`
-	HeuristicScale    float64       `json:"heuristicScale"`
-	AsyncWorkers      int           `json:"asyncWorkers"`
-	ThrottlePerSecond int           `json:"throttlePerSecond"`
-	QueueTimeout      time.Duration `json:"queueTimeout"`
+	MaxSearchNodes    int      `json:"maxSearchNodes"`
+	HeuristicScale    float64  `json:"heuristicScale"`
+	AsyncWorkers      int      `json:"asyncWorkers"`
+	ThrottlePerSecond int      `json:"throttlePerSecond"`
+	QueueTimeout      Duration `json:"queueTimeout"`
 }
 
 type TerrainConfig struct {
@@ -78,21 +133,21 @@ type EconomyConfig struct {
 }
 
 type EntityConfig struct {
-	MaxEntitiesPerChunk int           `json:"maxEntitiesPerChunk"`
-	EntityTickRate      time.Duration `json:"entityTickRate"`
-	ProjectileTickRate  time.Duration `json:"projectileTickRate"`
-	MovementWorkers     int           `json:"movementWorkers"`
+	MaxEntitiesPerChunk int      `json:"maxEntitiesPerChunk"`
+	EntityTickRate      Duration `json:"entityTickRate"`
+	ProjectileTickRate  Duration `json:"projectileTickRate"`
+	MovementWorkers     int      `json:"movementWorkers"`
 }
 
 type EnvironmentConfig struct {
-	DayLength          time.Duration `json:"dayLength"`
-	WeatherMinDuration time.Duration `json:"weatherMinDuration"`
-	WeatherMaxDuration time.Duration `json:"weatherMaxDuration"`
-	StormChance        float64       `json:"stormChance"`
-	RainChance         float64       `json:"rainChance"`
-	WindBase           float64       `json:"windBase"`
-	WindVariance       float64       `json:"windVariance"`
-	Seed               int64         `json:"seed"`
+	DayLength          Duration `json:"dayLength"`
+	WeatherMinDuration Duration `json:"weatherMinDuration"`
+	WeatherMaxDuration Duration `json:"weatherMaxDuration"`
+	StormChance        float64  `json:"stormChance"`
+	RainChance         float64  `json:"rainChance"`
+	WindBase           float64  `json:"windBase"`
+	WindVariance       float64  `json:"windVariance"`
+	Seed               int64    `json:"seed"`
 }
 
 type ChunkIndex struct {
@@ -134,9 +189,9 @@ func Default() *Config {
 			ID:                 "chunk-server-0",
 			Description:        "local development chunk server",
 			GlobalChunkOrigin:  ChunkIndex{X: 0, Y: 0},
-			TickRate:           33 * time.Millisecond,
-			StateStreamRate:    200 * time.Millisecond,
-			EntityStreamRate:   50 * time.Millisecond,
+			TickRate:           Duration(33 * time.Millisecond),
+			StateStreamRate:    Duration(200 * time.Millisecond),
+			EntityStreamRate:   Duration(50 * time.Millisecond),
 			MaxConcurrentLoads: 4,
 		},
 		Chunk: ChunkConfig{
@@ -149,18 +204,18 @@ func Default() *Config {
 			ListenUDP:            ":19000",
 			MainServerEndpoints:  []string{"127.0.0.1:20000"},
 			NeighborEndpoints:    []NeighborRef{},
-			HandshakeTimeout:     3 * time.Second,
-			KeepAliveInterval:    5 * time.Second,
+			HandshakeTimeout:     Duration(3 * time.Second),
+			KeepAliveInterval:    Duration(5 * time.Second),
 			MaxDatagramSizeBytes: 1 << 16,
-			DiscoveryInterval:    10 * time.Second,
-			TransferRetry:        2 * time.Second,
+			DiscoveryInterval:    Duration(10 * time.Second),
+			TransferRetry:        Duration(2 * time.Second),
 		},
 		Pathfinding: PathfindingConfig{
 			MaxSearchNodes:    50_000,
 			HeuristicScale:    1.0,
 			AsyncWorkers:      4,
 			ThrottlePerSecond: 120,
-			QueueTimeout:      250 * time.Millisecond,
+			QueueTimeout:      Duration(250 * time.Millisecond),
 		},
 		Terrain: TerrainConfig{
 			Seed:        1337,
@@ -184,14 +239,14 @@ func Default() *Config {
 		},
 		Entities: EntityConfig{
 			MaxEntitiesPerChunk: 4096,
-			EntityTickRate:      33 * time.Millisecond,
-			ProjectileTickRate:  16 * time.Millisecond,
+			EntityTickRate:      Duration(33 * time.Millisecond),
+			ProjectileTickRate:  Duration(16 * time.Millisecond),
 			MovementWorkers:     1,
 		},
 		Environment: EnvironmentConfig{
-			DayLength:          20 * time.Minute,
-			WeatherMinDuration: 2 * time.Minute,
-			WeatherMaxDuration: 5 * time.Minute,
+			DayLength:          Duration(20 * time.Minute),
+			WeatherMinDuration: Duration(2 * time.Minute),
+			WeatherMaxDuration: Duration(5 * time.Minute),
 			StormChance:        0.15,
 			RainChance:         0.35,
 			WindBase:           3.0,
