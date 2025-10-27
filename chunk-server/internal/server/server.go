@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -70,6 +71,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	region := world.NewServerRegion(cfg)
+	world.SetStorageProvider(world.NewDiskStorageProvider(filepath.Join("chunks"), region))
 	terrainGen := terrain.NewNoiseGenerator(cfg.Terrain, cfg.Economy)
 	worldManager := world.NewManager(region, terrainGen)
 

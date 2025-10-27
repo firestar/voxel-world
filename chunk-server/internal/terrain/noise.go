@@ -64,11 +64,12 @@ func (g *NoiseGenerator) populateColumn(chunk *world.Chunk, bounds world.Bounds,
 	globalX := bounds.Min.X + localX
 	globalY := bounds.Min.Y + localY
 
+	column := make([]world.Block, maxLocalZ+1)
 	for localZ := 0; localZ <= maxLocalZ; localZ++ {
 		globalZ := bounds.Min.Z + localZ
-		block := g.composeTerrainBlock(globalX, globalY, globalZ, surfaceHeight, noise)
-		chunk.SetLocalBlock(localX, localY, localZ, block)
+		column[localZ] = g.composeTerrainBlock(globalX, globalY, globalZ, surfaceHeight, noise)
 	}
+	chunk.SetColumnBlocks(localX, localY, column)
 }
 
 func (g *NoiseGenerator) composeTerrainBlock(globalX, globalY, globalZ int, surfaceHeight int, noise float64) world.Block {
