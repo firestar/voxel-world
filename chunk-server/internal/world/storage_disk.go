@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,8 @@ const (
 	diskOpDelete byte = 0
 	diskOpSet    byte = 1
 )
+
+var maxChunkFileSize int64 = 128 * 1024 * 1024
 
 func init() {
 	gob.Register(map[string]any{})
@@ -60,51 +63,93 @@ func (p *DiskStorageProvider) chunkPath(key ChunkCoord) (string, error) {
 }
 
 type diskRecordMeta struct {
+	part   int
 	offset int64
 	size   uint32
 }
 
 type diskBlockStorage struct {
-	file    *os.File
-	mu      sync.RWMutex
-	records map[int]diskRecordMeta
+	basePath string
+	mu       sync.RWMutex
+	records  map[int]diskRecordMeta
+	lastPart int
 }
 
 func newDiskBlockStorage(path string) (*diskBlockStorage, error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open chunk file: %w", err)
-	}
 	storage := &diskBlockStorage{
-		file:    f,
-		records: make(map[int]diskRecordMeta),
+		basePath: path,
+		records:  make(map[int]diskRecordMeta),
+	}
+	if err := storage.ensureBaseFile(); err != nil {
+		return nil, err
 	}
 	if err := storage.loadIndex(); err != nil {
-		f.Close()
 		return nil, err
 	}
 	return storage, nil
+}
+
+func (s *diskBlockStorage) ensureBaseFile() error {
+	f, err := os.OpenFile(s.basePath, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return fmt.Errorf("open chunk file: %w", err)
+	}
+	return f.Close()
+}
+
+func (s *diskBlockStorage) partPath(part int) string {
+	if part == 0 {
+		return s.basePath
+	}
+	return fmt.Sprintf("%s.part%d", s.basePath, part)
 }
 
 func (s *diskBlockStorage) loadIndex() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("rewind chunk file: %w", err)
-	}
+	s.records = make(map[int]diskRecordMeta)
+	s.lastPart = 0
 
 	header := make([]byte, 9)
-	var offset int64
-	for {
-		if _, err := io.ReadFull(s.file, header); err != nil {
-			if err == io.EOF {
+	for part := 0; ; part++ {
+		path := s.partPath(part)
+		f, err := os.Open(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if part == 0 {
+					// Base file should always exist due to ensureBaseFile.
+					return nil
+				}
 				break
 			}
-			if err == io.ErrUnexpectedEOF {
-				return fmt.Errorf("truncated chunk header: %w", err)
+			return fmt.Errorf("open chunk file %s: %w", path, err)
+		}
+
+		if err := s.scanPart(f, part, header); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("close chunk file %s: %w", path, err)
+		}
+		s.lastPart = part
+	}
+
+	return nil
+}
+
+func (s *diskBlockStorage) scanPart(f *os.File, part int, header []byte) error {
+	var offset int64
+	for {
+		if _, err := io.ReadFull(f, header); err != nil {
+			if err == io.EOF {
+				return nil
 			}
-			return fmt.Errorf("read chunk header: %w", err)
+			if err == io.ErrUnexpectedEOF {
+				return fmt.Errorf("truncated chunk header in %s: %w", f.Name(), err)
+			}
+			return fmt.Errorf("read chunk header in %s: %w", f.Name(), err)
 		}
 		op := header[0]
 		index := int(binary.LittleEndian.Uint32(header[1:5]))
@@ -112,17 +157,15 @@ func (s *diskBlockStorage) loadIndex() error {
 		recordOffset := offset
 		offset += int64(len(header)) + int64(size)
 
-		if _, err := s.file.Seek(int64(size), io.SeekCurrent); err != nil {
-			return fmt.Errorf("seek past payload: %w", err)
+		if _, err := f.Seek(int64(size), io.SeekCurrent); err != nil {
+			return fmt.Errorf("seek past payload in %s: %w", f.Name(), err)
 		}
 		if op == diskOpSet {
-			s.records[index] = diskRecordMeta{offset: recordOffset, size: size}
+			s.records[index] = diskRecordMeta{part: part, offset: recordOffset, size: size}
 		} else {
 			delete(s.records, index)
 		}
 	}
-
-	return nil
 }
 
 func (s *diskBlockStorage) LoadColumn(index int) ([]Block, bool, error) {
@@ -134,7 +177,13 @@ func (s *diskBlockStorage) LoadColumn(index int) ([]Block, bool, error) {
 	}
 
 	header := make([]byte, 9)
-	if _, err := s.file.ReadAt(header, meta.offset); err != nil {
+	f, err := os.Open(s.partPath(meta.part))
+	if err != nil {
+		return nil, false, fmt.Errorf("open chunk file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.ReadAt(header, meta.offset); err != nil {
 		return nil, false, fmt.Errorf("read header at %d: %w", meta.offset, err)
 	}
 	if header[0] != diskOpSet {
@@ -142,7 +191,7 @@ func (s *diskBlockStorage) LoadColumn(index int) ([]Block, bool, error) {
 	}
 	size := binary.LittleEndian.Uint32(header[5:9])
 	payload := make([]byte, size)
-	if _, err := s.file.ReadAt(payload, meta.offset+int64(len(header))); err != nil {
+	if _, err := f.ReadAt(payload, meta.offset+int64(len(header))); err != nil {
 		return nil, false, fmt.Errorf("read payload: %w", err)
 	}
 	var blocks []Block
@@ -166,20 +215,11 @@ func (s *diskBlockStorage) SaveColumn(index int, blocks []Block) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	offset, err := s.file.Seek(0, io.SeekEnd)
+	meta, err := s.appendRecord(header, payload.Bytes())
 	if err != nil {
-		return fmt.Errorf("seek chunk end: %w", err)
+		return err
 	}
-	if _, err := s.file.Write(header); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-	if _, err := s.file.Write(payload.Bytes()); err != nil {
-		return fmt.Errorf("write payload: %w", err)
-	}
-	if err := s.file.Sync(); err != nil {
-		return fmt.Errorf("sync chunk file: %w", err)
-	}
-	s.records[index] = diskRecordMeta{offset: offset, size: uint32(payload.Len())}
+	s.records[index] = meta
 	return nil
 }
 
@@ -192,14 +232,8 @@ func (s *diskBlockStorage) Delete(index int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.file.Seek(0, io.SeekEnd); err != nil {
-		return fmt.Errorf("seek chunk end: %w", err)
-	}
-	if _, err := s.file.Write(header); err != nil {
-		return fmt.Errorf("write delete header: %w", err)
-	}
-	if err := s.file.Sync(); err != nil {
-		return fmt.Errorf("sync chunk file: %w", err)
+	if _, err := s.appendRecord(header, nil); err != nil {
+		return err
 	}
 	delete(s.records, index)
 	return nil
@@ -237,7 +271,50 @@ func (s *diskBlockStorage) ForEach(fn func(index int, blocks []Block) bool) erro
 }
 
 func (s *diskBlockStorage) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.file.Close()
+	return nil
+}
+
+func (s *diskBlockStorage) appendRecord(header, payload []byte) (diskRecordMeta, error) {
+	entrySize := int64(len(header) + len(payload))
+	if entrySize > maxChunkFileSize {
+		return diskRecordMeta{}, fmt.Errorf("chunk entry size %d exceeds max chunk file size %d", entrySize, maxChunkFileSize)
+	}
+
+	for {
+		path := s.partPath(s.lastPart)
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+		if err != nil {
+			return diskRecordMeta{}, fmt.Errorf("open chunk file %s: %w", path, err)
+		}
+		offset, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			f.Close()
+			return diskRecordMeta{}, fmt.Errorf("seek chunk end: %w", err)
+		}
+		if offset+entrySize > maxChunkFileSize {
+			if err := f.Close(); err != nil {
+				return diskRecordMeta{}, fmt.Errorf("close chunk file %s: %w", path, err)
+			}
+			s.lastPart++
+			continue
+		}
+		if _, err := f.Write(header); err != nil {
+			f.Close()
+			return diskRecordMeta{}, fmt.Errorf("write header: %w", err)
+		}
+		if len(payload) > 0 {
+			if _, err := f.Write(payload); err != nil {
+				f.Close()
+				return diskRecordMeta{}, fmt.Errorf("write payload: %w", err)
+			}
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return diskRecordMeta{}, fmt.Errorf("sync chunk file: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return diskRecordMeta{}, fmt.Errorf("close chunk file %s: %w", path, err)
+		}
+		return diskRecordMeta{part: s.lastPart, offset: offset, size: uint32(len(payload))}, nil
+	}
 }
