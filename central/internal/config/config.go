@@ -50,9 +50,22 @@ type PlayerAPIConfig struct {
 }
 
 type WorldConfig struct {
-	ChunkWidth  int `yaml:"chunk_width"`
-	ChunkDepth  int `yaml:"chunk_depth"`
-	ChunkHeight int `yaml:"chunk_height"`
+	ChunkWidth  int               `yaml:"chunk_width"`
+	ChunkDepth  int               `yaml:"chunk_depth"`
+	ChunkHeight int               `yaml:"chunk_height"`
+	Blocks      []BlockDefinition `yaml:"blocks"`
+}
+
+type BlockDefinition struct {
+	ID    string           `yaml:"id" json:"id"`
+	Color string           `yaml:"color" json:"color"`
+	Spawn BlockSpawnConfig `yaml:"spawn" json:"spawn"`
+}
+
+type BlockSpawnConfig struct {
+	Type        string `yaml:"type" json:"type"`
+	VeinSizeMin int    `yaml:"vein_size_min,omitempty" json:"veinSizeMin,omitempty"`
+	VeinSizeMax int    `yaml:"vein_size_max,omitempty" json:"veinSizeMax,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
@@ -83,6 +96,9 @@ func (c *Config) Validate() error {
 	if c.World.ChunkWidth <= 0 || c.World.ChunkDepth <= 0 || c.World.ChunkHeight <= 0 {
 		return fmt.Errorf("world chunk dimensions must be positive")
 	}
+	if err := validateWorldBlocks(c.World.Blocks); err != nil {
+		return err
+	}
 	for i, cs := range c.ChunkServers {
 		if cs.ID == "" {
 			return fmt.Errorf("chunk_servers[%d].id must be set", i)
@@ -98,4 +114,50 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validateWorldBlocks(blocks []BlockDefinition) error {
+	if len(blocks) == 0 {
+		return fmt.Errorf("world.blocks cannot be empty")
+	}
+	for i, block := range blocks {
+		if block.ID == "" {
+			return fmt.Errorf("world.blocks[%d].id must be set", i)
+		}
+		if !isValidHexColor(block.Color) {
+			return fmt.Errorf("world.blocks[%d].color must be a hex RGB value", i)
+		}
+		switch block.Spawn.Type {
+		case "solo":
+			if block.Spawn.VeinSizeMin != 0 || block.Spawn.VeinSizeMax != 0 {
+				return fmt.Errorf("world.blocks[%d].spawn vein sizes must be zero for solo blocks", i)
+			}
+		case "vein":
+			if block.Spawn.VeinSizeMin <= 0 || block.Spawn.VeinSizeMax <= 0 {
+				return fmt.Errorf("world.blocks[%d].spawn vein sizes must be positive", i)
+			}
+			if block.Spawn.VeinSizeMin > block.Spawn.VeinSizeMax {
+				return fmt.Errorf("world.blocks[%d].spawn vein_size_min cannot exceed vein_size_max", i)
+			}
+		default:
+			return fmt.Errorf("world.blocks[%d].spawn.type must be either 'solo' or 'vein'", i)
+		}
+	}
+	return nil
+}
+
+func isValidHexColor(s string) bool {
+	if len(s) != 7 || s[0] != '#' {
+		return false
+	}
+	for _, ch := range s[1:] {
+		switch {
+		case ch >= '0' && ch <= '9':
+		case ch >= 'a' && ch <= 'f':
+		case ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }

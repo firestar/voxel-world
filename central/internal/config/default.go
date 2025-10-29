@@ -18,6 +18,7 @@ func Default() Config {
 			ChunkWidth:  512,
 			ChunkDepth:  512,
 			ChunkHeight: 2048,
+			Blocks:      DefaultBlocks(),
 		},
 		Cluster: ClusterConfig{
 			DefaultBinary: "../chunk-server/cmd/chunkserver/chunkserver",

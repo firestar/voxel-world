@@ -64,6 +64,13 @@ func TestValidateDetectsInvalidConfigurations(t *testing.T) {
 			},
 			wantErr: "entities.movementWorkers cannot be negative",
 		},
+		{
+			name: "missing block id",
+			mutate: func(cfg *Config) {
+				cfg.Blocks[0].ID = ""
+			},
+			wantErr: "blocks[0].id must be set",
+		},
 	}
 
 	for _, tt := range tests {

@@ -13,7 +13,7 @@ func TestValidateAppliesDefaultsAndClusterExecutable(t *testing.T) {
 			ChunkSpan: ChunkSpan{ChunksX: 1, ChunksY: 1},
 		}},
 		Cluster: ClusterConfig{DefaultBinary: "/usr/bin/chunk"},
-		World:   WorldConfig{ChunkWidth: 16, ChunkDepth: 16, ChunkHeight: 256},
+		World:   WorldConfig{ChunkWidth: 16, ChunkDepth: 16, ChunkHeight: 256, Blocks: DefaultBlocks()},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -32,7 +32,7 @@ func TestValidateAppliesDefaultsAndClusterExecutable(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidConfigurations(t *testing.T) {
-	validWorld := WorldConfig{ChunkWidth: 16, ChunkDepth: 16, ChunkHeight: 256}
+	validWorld := WorldConfig{ChunkWidth: 16, ChunkDepth: 16, ChunkHeight: 256, Blocks: DefaultBlocks()}
 	tests := map[string]*Config{
 		"no chunk servers": {
 			World: validWorld,
@@ -94,6 +94,11 @@ world:
   chunk_width: 16
   chunk_depth: 16
   chunk_height: 256
+  blocks:
+    - id: dirt
+      color: "#8B5A2B"
+      spawn:
+        type: solo
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
