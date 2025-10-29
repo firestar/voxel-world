@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -35,7 +36,8 @@ type Server struct {
 
 	ai *ai.Coordinator
 
-	chunkCursor       world.LocalChunkIndex
+	chunkTraversal    []world.LocalChunkIndex
+	chunkCursor       int
 	streamSeq         uint64
 	dirtyEntities     map[entities.ID]entities.Entity
 	dirtyChunks       map[world.ChunkCoord]struct{}
@@ -120,6 +122,7 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 	}
 	srv.ai = ai.NewCoordinator(region, entityManager, navigator, lookup)
+	srv.chunkTraversal = buildCircularChunkTraversal(region.ChunksPerAxis)
 	srv.world.SetLighting(world.LightingState{
 		Ambient:     initialEnv.Lighting.Ambient,
 		SunAngle:    initialEnv.Lighting.SunAngle,
@@ -751,9 +754,15 @@ func (s *Server) broadcastChunkSummaries(ctx context.Context) {
 		return
 	}
 
-	global, err := s.world.Region().LocalToGlobalChunk(s.chunkCursor)
+	if len(s.chunkTraversal) == 0 {
+		return
+	}
+
+	local := s.chunkTraversal[s.chunkCursor]
+
+	global, err := s.world.Region().LocalToGlobalChunk(local)
 	if err != nil {
-		s.chunkCursor = world.LocalChunkIndex{}
+		s.chunkCursor = 0
 		return
 	}
 
@@ -792,14 +801,54 @@ func (s *Server) sendChunkSummary(ctx context.Context, coord world.ChunkCoord) e
 }
 
 func (s *Server) advanceChunkCursor() {
-	s.chunkCursor.X++
-	if s.chunkCursor.X >= s.cfg.Chunk.ChunksPerAxis {
-		s.chunkCursor.X = 0
-		s.chunkCursor.Y++
-		if s.chunkCursor.Y >= s.cfg.Chunk.ChunksPerAxis {
-			s.chunkCursor.Y = 0
+	if len(s.chunkTraversal) == 0 {
+		return
+	}
+	s.chunkCursor = (s.chunkCursor + 1) % len(s.chunkTraversal)
+}
+
+func buildCircularChunkTraversal(size int) []world.LocalChunkIndex {
+	if size <= 0 {
+		return nil
+	}
+
+	type entry struct {
+		index    world.LocalChunkIndex
+		radiusSq int
+		angle    float64
+	}
+
+	entries := make([]entry, 0, size*size)
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := x
+			dy := y
+			entries = append(entries, entry{
+				index:    world.LocalChunkIndex{X: x, Y: y},
+				radiusSq: dx*dx + dy*dy,
+				angle:    math.Atan2(float64(dy), float64(dx)),
+			})
 		}
 	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].radiusSq == entries[j].radiusSq {
+			if entries[i].angle == entries[j].angle {
+				if entries[i].index.Y == entries[j].index.Y {
+					return entries[i].index.X < entries[j].index.X
+				}
+				return entries[i].index.Y < entries[j].index.Y
+			}
+			return entries[i].angle < entries[j].angle
+		}
+		return entries[i].radiusSq < entries[j].radiusSq
+	})
+
+	traversal := make([]world.LocalChunkIndex, len(entries))
+	for i, entry := range entries {
+		traversal[i] = entry.index
+	}
+	return traversal
 }
 
 func (s *Server) onNeighborHello(ctx context.Context, addr *net.UDPAddr, env network.Envelope) {
