@@ -11,6 +11,7 @@ type chunkServerConfig struct {
 	Economy     chunkServerEconomyConfig     `json:"economy" yaml:"economy"`
 	Entities    chunkServerEntitiesConfig    `json:"entities" yaml:"entities"`
 	Environment chunkServerEnvironmentConfig `json:"environment" yaml:"environment"`
+	Blocks      []config.BlockDefinition     `json:"blocks" yaml:"blocks"`
 }
 
 type chunkServerServerConfig struct {
@@ -162,6 +163,7 @@ func defaultChunkServerConfig() chunkServerConfig {
 			WindVariance:       5.0,
 			Seed:               1337,
 		},
+		Blocks: config.DefaultBlocks(),
 	}
 }
 
@@ -186,5 +188,8 @@ func (c *chunkServerConfig) applyClusterOverrides(cfg *config.Config, cs config.
 	}
 	if cs.ListenAddress != "" {
 		c.Network.ListenUDP = cs.ListenAddress
+	}
+	if len(cfg.World.Blocks) > 0 {
+		c.Blocks = cfg.World.Blocks
 	}
 }

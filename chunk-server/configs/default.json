@@ -66,5 +66,22 @@
     "windBase": 3.0,
     "windVariance": 5.0,
     "seed": 1337
-  }
+  },
+  "blocks": [
+    {"id": "dirt", "color": "#8B5A2B", "spawn": {"type": "vein", "veinSizeMin": 32, "veinSizeMax": 96}},
+    {"id": "sand", "color": "#C2B280", "spawn": {"type": "vein", "veinSizeMin": 24, "veinSizeMax": 80}},
+    {"id": "slate", "color": "#2F4F4F", "spawn": {"type": "vein", "veinSizeMin": 16, "veinSizeMax": 48}},
+    {"id": "sandstone", "color": "#D2B48C", "spawn": {"type": "vein", "veinSizeMin": 20, "veinSizeMax": 64}},
+    {"id": "obsidian", "color": "#341A34", "spawn": {"type": "vein", "veinSizeMin": 8, "veinSizeMax": 20}},
+    {"id": "shale", "color": "#4B3F32", "spawn": {"type": "vein", "veinSizeMin": 16, "veinSizeMax": 40}},
+    {"id": "cobblestone", "color": "#8A8A8A", "spawn": {"type": "vein", "veinSizeMin": 24, "veinSizeMax": 70}},
+    {"id": "coal", "color": "#2B2B2B", "spawn": {"type": "vein", "veinSizeMin": 6, "veinSizeMax": 18}},
+    {"id": "oil_soaked_rock", "color": "#3B2F2F", "spawn": {"type": "vein", "veinSizeMin": 4, "veinSizeMax": 12}},
+    {"id": "iron", "color": "#B7410E", "spawn": {"type": "vein", "veinSizeMin": 4, "veinSizeMax": 12}},
+    {"id": "copper", "color": "#B87333", "spawn": {"type": "vein", "veinSizeMin": 4, "veinSizeMax": 14}},
+    {"id": "gold", "color": "#FFD700", "spawn": {"type": "vein", "veinSizeMin": 3, "veinSizeMax": 8}},
+    {"id": "silver", "color": "#C0C0C0", "spawn": {"type": "vein", "veinSizeMin": 3, "veinSizeMax": 8}},
+    {"id": "uranium", "color": "#6B8E23", "spawn": {"type": "vein", "veinSizeMin": 2, "veinSizeMax": 5}},
+    {"id": "unobtainium", "color": "#7F00FF", "spawn": {"type": "solo"}}
+  ]
 }

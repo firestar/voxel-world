@@ -178,6 +178,9 @@ func TestStartAllProvidesConfigPayload(t *testing.T) {
 	if jsonCfg.Server.GlobalChunkOrigin.X != 8 || jsonCfg.Server.GlobalChunkOrigin.Y != 4 {
 		t.Fatalf("json payload origin mismatch: %#v", jsonCfg.Server.GlobalChunkOrigin)
 	}
+	if len(jsonCfg.Blocks) == 0 {
+		t.Fatalf("json payload blocks should not be empty")
+	}
 
 	decodedYAML, err := base64.StdEncoding.DecodeString(yamlLine)
 	if err != nil {
@@ -189,6 +192,9 @@ func TestStartAllProvidesConfigPayload(t *testing.T) {
 	}
 	if yamlCfg.Server.ID != jsonCfg.Server.ID {
 		t.Fatalf("yaml payload server id mismatch: %q vs %q", yamlCfg.Server.ID, jsonCfg.Server.ID)
+	}
+	if len(yamlCfg.Blocks) == 0 {
+		t.Fatalf("yaml payload blocks should not be empty")
 	}
 }
 

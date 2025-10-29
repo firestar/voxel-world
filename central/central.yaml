@@ -4,6 +4,95 @@ world:
   chunk_width: 512
   chunk_depth: 512
   chunk_height: 2048
+  blocks:
+    - id: dirt
+      color: "#8B5A2B"
+      spawn:
+        type: vein
+        vein_size_min: 32
+        vein_size_max: 96
+    - id: sand
+      color: "#C2B280"
+      spawn:
+        type: vein
+        vein_size_min: 24
+        vein_size_max: 80
+    - id: slate
+      color: "#2F4F4F"
+      spawn:
+        type: vein
+        vein_size_min: 16
+        vein_size_max: 48
+    - id: sandstone
+      color: "#D2B48C"
+      spawn:
+        type: vein
+        vein_size_min: 20
+        vein_size_max: 64
+    - id: obsidian
+      color: "#341A34"
+      spawn:
+        type: vein
+        vein_size_min: 8
+        vein_size_max: 20
+    - id: shale
+      color: "#4B3F32"
+      spawn:
+        type: vein
+        vein_size_min: 16
+        vein_size_max: 40
+    - id: cobblestone
+      color: "#8A8A8A"
+      spawn:
+        type: vein
+        vein_size_min: 24
+        vein_size_max: 70
+    - id: coal
+      color: "#2B2B2B"
+      spawn:
+        type: vein
+        vein_size_min: 6
+        vein_size_max: 18
+    - id: oil_soaked_rock
+      color: "#3B2F2F"
+      spawn:
+        type: vein
+        vein_size_min: 4
+        vein_size_max: 12
+    - id: iron
+      color: "#B7410E"
+      spawn:
+        type: vein
+        vein_size_min: 4
+        vein_size_max: 12
+    - id: copper
+      color: "#B87333"
+      spawn:
+        type: vein
+        vein_size_min: 4
+        vein_size_max: 14
+    - id: gold
+      color: "#FFD700"
+      spawn:
+        type: vein
+        vein_size_min: 3
+        vein_size_max: 8
+    - id: silver
+      color: "#C0C0C0"
+      spawn:
+        type: vein
+        vein_size_min: 3
+        vein_size_max: 8
+    - id: uranium
+      color: "#6B8E23"
+      spawn:
+        type: vein
+        vein_size_min: 2
+        vein_size_max: 5
+    - id: unobtainium
+      color: "#7F00FF"
+      spawn:
+        type: solo
 cluster:
   default_binary: /usr/local/bin/chunkserver
   data_root: /var/lib/central
