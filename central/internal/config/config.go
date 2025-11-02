@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -54,12 +55,15 @@ type WorldConfig struct {
 	ChunkDepth  int               `yaml:"chunk_depth"`
 	ChunkHeight int               `yaml:"chunk_height"`
 	Blocks      []BlockDefinition `yaml:"blocks"`
+	DayLength   string            `yaml:"day_length"`
+	InitialHour float64           `yaml:"initial_hour"`
 }
 
 type BlockDefinition struct {
-	ID    string           `yaml:"id" json:"id"`
-	Color string           `yaml:"color" json:"color"`
-	Spawn BlockSpawnConfig `yaml:"spawn" json:"spawn"`
+	ID            string           `yaml:"id" json:"id"`
+	Color         string           `yaml:"color" json:"color"`
+	Spawn         BlockSpawnConfig `yaml:"spawn" json:"spawn"`
+	LightEmission float64          `yaml:"light_emission" json:"lightEmission"`
 }
 
 type BlockSpawnConfig struct {
@@ -96,6 +100,15 @@ func (c *Config) Validate() error {
 	if c.World.ChunkWidth <= 0 || c.World.ChunkDepth <= 0 || c.World.ChunkHeight <= 0 {
 		return fmt.Errorf("world chunk dimensions must be positive")
 	}
+	if c.World.DayLength == "" {
+		c.World.DayLength = "20m"
+	}
+	if _, err := time.ParseDuration(c.World.DayLength); err != nil {
+		return fmt.Errorf("world.day_length invalid: %w", err)
+	}
+	if c.World.InitialHour < 0 || c.World.InitialHour >= 24 {
+		c.World.InitialHour = 12.0
+	}
 	if err := validateWorldBlocks(c.World.Blocks); err != nil {
 		return err
 	}
@@ -126,6 +139,9 @@ func validateWorldBlocks(blocks []BlockDefinition) error {
 		}
 		if !isValidHexColor(block.Color) {
 			return fmt.Errorf("world.blocks[%d].color must be a hex RGB value", i)
+		}
+		if block.LightEmission < 0 {
+			return fmt.Errorf("world.blocks[%d].light_emission cannot be negative", i)
 		}
 		switch block.Spawn.Type {
 		case "solo":

@@ -2,7 +2,8 @@ import type {
   ChunkDeltaEvent,
   ChunkSummaryEvent,
   ConnectionState,
-  JoinResult
+  JoinResult,
+  WorldTimeState
 } from '@shared/protocol';
 
 declare global {
@@ -17,6 +18,9 @@ declare global {
       ) => () => void;
       onChunkDelta: (
         listener: (event: ChunkDeltaEvent) => void
+      ) => () => void;
+      onWorldTime: (
+        listener: (state: WorldTimeState) => void
       ) => () => void;
     };
   }

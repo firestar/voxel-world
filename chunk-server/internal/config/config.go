@@ -157,9 +157,10 @@ type ChunkIndex struct {
 }
 
 type BlockDefinition struct {
-	ID    string           `json:"id"`
-	Color string           `json:"color"`
-	Spawn BlockSpawnConfig `json:"spawn"`
+	ID            string           `json:"id"`
+	Color         string           `json:"color"`
+	Spawn         BlockSpawnConfig `json:"spawn"`
+	LightEmission float64          `json:"lightEmission"`
 }
 
 type BlockSpawnConfig struct {
@@ -315,6 +316,9 @@ func validateBlocks(blocks []BlockDefinition) error {
 		if !isValidHexColor(block.Color) {
 			return fmt.Errorf("blocks[%d].color must be a hex RGB value", i)
 		}
+		if block.LightEmission < 0 {
+			return fmt.Errorf("blocks[%d].lightEmission cannot be negative", i)
+		}
 		switch block.Spawn.Type {
 		case "solo":
 			if block.Spawn.VeinSizeMin != 0 || block.Spawn.VeinSizeMax != 0 {
@@ -369,5 +373,7 @@ func defaultBlockDefinitions() []BlockDefinition {
 		{ID: "silver", Color: "#C0C0C0", Spawn: BlockSpawnConfig{Type: "vein", VeinSizeMin: 3, VeinSizeMax: 8}},
 		{ID: "uranium", Color: "#6B8E23", Spawn: BlockSpawnConfig{Type: "vein", VeinSizeMin: 2, VeinSizeMax: 5}},
 		{ID: "unobtainium", Color: "#7F00FF", Spawn: BlockSpawnConfig{Type: "solo"}},
+		{ID: "unit_lumen_panel", Color: "#FFF3B0", Spawn: BlockSpawnConfig{Type: "solo"}, LightEmission: 6.0},
+		{ID: "structure_arc_lamp", Color: "#FFE066", Spawn: BlockSpawnConfig{Type: "solo"}, LightEmission: 10.0},
 	}
 }

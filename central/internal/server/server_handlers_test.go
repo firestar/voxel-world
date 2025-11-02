@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"central/internal/config"
 	"central/internal/worldmap"
@@ -128,4 +129,23 @@ func containsAll(s string, substrs []string) bool {
 		}
 	}
 	return true
+}
+
+func TestHandleTime(t *testing.T) {
+	srv := &Server{
+		cfg:   &config.Config{},
+		cycle: newDayNightCycle(12*time.Minute, 9),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/time", nil)
+	rr := httptest.NewRecorder()
+
+	srv.handleTime(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "sunPosition") {
+		t.Fatalf("expected sunPosition in response, got %s", body)
+	}
 }

@@ -105,5 +105,9 @@ window.api.onChunkDelta((event) => {
   );
 });
 
+window.api.onWorldTime((state) => {
+  scene.updateTime(state);
+});
+
 renderServers(undefined);
 log('Client ready. Enter the central server URL and click Join.');

@@ -22,6 +22,9 @@ The project implements a distributed voxel RTS engine. Chunk servers (Go) own 51
 - Chunk servers coordinate role-based squads through a new AI layer that maintains dynamic formations, plans cross-chunk construction efforts, and annotates entity intent so neighboring servers can anticipate incoming support.
 - Automated tests cover movement engine timing (tick clamping and worker usage) alongside pathfinding constraints to ensure generated routes remain passable and avoid blocked endpoints.
 - A configurable environment simulator advances day/night lighting, transitions between clear/rain/storm weather, and injects physics plus behaviour modifiers into entity updates; lighting is published through the world manager for downstream consumers.
+- Central orchestrator now exposes a `/time` endpoint backed by a shared day/night clock so clients can stay synchronised with the global cycle, including sun position and lighting intensities.
+- The Electron client renders dynamic sky and lighting based on the orchestrator time stream and now provides an elevated WASD/QE-controlled camera that maintains a 45° pitch from 1000 units above the terrain.
+- Block definitions include dedicated light-emitting entity materials (for units and structures), and voxel deltas stream their light emission to consumers.
 - README documentation references orchestrator usage and notes that `project_context.md` must be kept current.
 
 ## File References

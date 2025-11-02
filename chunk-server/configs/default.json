@@ -82,6 +82,8 @@
     {"id": "gold", "color": "#FFD700", "spawn": {"type": "vein", "veinSizeMin": 3, "veinSizeMax": 8}},
     {"id": "silver", "color": "#C0C0C0", "spawn": {"type": "vein", "veinSizeMin": 3, "veinSizeMax": 8}},
     {"id": "uranium", "color": "#6B8E23", "spawn": {"type": "vein", "veinSizeMin": 2, "veinSizeMax": 5}},
-    {"id": "unobtainium", "color": "#7F00FF", "spawn": {"type": "solo"}}
+    {"id": "unobtainium", "color": "#7F00FF", "spawn": {"type": "solo"}},
+    {"id": "unit_lumen_panel", "color": "#FFF3B0", "lightEmission": 6, "spawn": {"type": "solo"}},
+    {"id": "structure_arc_lamp", "color": "#FFE066", "lightEmission": 10, "spawn": {"type": "solo"}}
   ]
 }

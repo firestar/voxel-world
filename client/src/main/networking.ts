@@ -9,6 +9,7 @@ import {
   ChunkSummaryPayload,
   JoinResult,
   MessageType,
+  WorldTimeState,
   encodeEnvelope,
   parseEnvelope
 } from '../shared/protocol';
@@ -22,6 +23,8 @@ type ActiveStream = {
 export class ChunkNetworkManager {
   private streams: Map<string, ActiveStream> = new Map();
   private window: BrowserWindow | null = null;
+  private timeTimer: NodeJS.Timeout | null = null;
+  private timeEndpoint: URL | null = null;
 
   setTarget(window: BrowserWindow) {
     this.window = window;
@@ -33,10 +36,12 @@ export class ChunkNetworkManager {
     }
     this.streams.clear();
     this.window = null;
+    this.stopTimeSync();
   }
 
   async connect(baseUrl: string): Promise<JoinResult> {
-    const servers = await this.fetchChunkServers(baseUrl);
+    const normalized = this.normalizeBaseUrl(baseUrl);
+    const servers = await this.fetchChunkServers(normalized);
     if (!servers.length) {
       return { ok: false, message: 'No chunk servers reported by central.' };
     }
@@ -44,6 +49,7 @@ export class ChunkNetworkManager {
     for (const server of servers) {
       this.startStream(server);
     }
+    this.startTimeSync(normalized);
     return {
       ok: true,
       message: `Connected to central at ${baseUrl}`,
@@ -56,19 +62,11 @@ export class ChunkNetworkManager {
       stream.socket.close();
     }
     this.streams.clear();
+    this.stopTimeSync();
   }
 
-  private async fetchChunkServers(baseUrl: string): Promise<ChunkServerInfo[]> {
-    let normalized = baseUrl.trim();
-    if (!/^https?:\/\//i.test(normalized)) {
-      normalized = `http://${normalized}`;
-    }
-    let url: URL;
-    try {
-      url = new URL(normalized);
-    } catch (err) {
-      throw new Error(`Invalid central server URL: ${normalized}`);
-    }
+  private async fetchChunkServers(baseUrl: URL): Promise<ChunkServerInfo[]> {
+    const url = new URL(baseUrl.toString());
     url.pathname = '/chunk-servers';
     const response = await fetch(url.toString(), {
       headers: {
@@ -80,6 +78,60 @@ export class ChunkNetworkManager {
     }
     const body = (await response.json()) as ChunkServerInfo[];
     return body;
+  }
+
+  private normalizeBaseUrl(baseUrl: string): URL {
+    let normalized = baseUrl.trim();
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `http://${normalized}`;
+    }
+    try {
+      const url = new URL(normalized);
+      url.pathname = '/';
+      url.search = '';
+      url.hash = '';
+      return url;
+    } catch (err) {
+      throw new Error(`Invalid central server URL: ${normalized}`);
+    }
+  }
+
+  private startTimeSync(baseUrl: URL) {
+    this.stopTimeSync();
+    const timeUrl = new URL(baseUrl.toString());
+    timeUrl.pathname = '/time';
+    this.timeEndpoint = timeUrl;
+    this.pollTime().catch((err) => {
+      console.warn('Initial world time fetch failed', err);
+    });
+    this.timeTimer = setInterval(() => {
+      this.pollTime().catch((err) => console.warn('World time poll failed', err));
+    }, 1000);
+  }
+
+  private stopTimeSync() {
+    if (this.timeTimer) {
+      clearInterval(this.timeTimer);
+      this.timeTimer = null;
+    }
+    this.timeEndpoint = null;
+  }
+
+  private async pollTime() {
+    if (!this.timeEndpoint) {
+      return;
+    }
+    const response = await fetch(this.timeEndpoint.toString(), {
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) {
+      throw new Error(`time endpoint returned ${response.status}`);
+    }
+    const payload = (await response.json()) as WorldTimeState;
+    if (!this.window) {
+      return;
+    }
+    this.window.webContents.send('world-time', payload);
   }
 
   private startStream(server: ChunkServerInfo) {
