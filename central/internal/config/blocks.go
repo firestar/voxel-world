@@ -79,5 +79,17 @@ func DefaultBlocks() []BlockDefinition {
 			Color: "#7F00FF",
 			Spawn: BlockSpawnConfig{Type: "solo"},
 		},
+		{
+			ID:            "unit_lumen_panel",
+			Color:         "#FFF3B0",
+			Spawn:         BlockSpawnConfig{Type: "solo"},
+			LightEmission: 6.0,
+		},
+		{
+			ID:            "structure_arc_lamp",
+			Color:         "#FFE066",
+			Spawn:         BlockSpawnConfig{Type: "solo"},
+			LightEmission: 10.0,
+		},
 	}
 }

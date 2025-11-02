@@ -21,6 +21,7 @@ type Server struct {
 	index   *worldmap.Index
 	httpSrv *http.Server
 	logger  *log.Logger
+	cycle   *dayNightCycle
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -30,11 +31,17 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	index := worldmap.NewIndex()
 	index.LoadFromConfig(cfg)
+	dayLength, err := time.ParseDuration(cfg.World.DayLength)
+	if err != nil {
+		return nil, fmt.Errorf("parse world day length: %w", err)
+	}
+	cycle := newDayNightCycle(dayLength, cfg.World.InitialHour)
 	s := &Server{
 		cfg:     cfg,
 		cluster: manager,
 		index:   index,
 		logger:  log.New(log.Writer(), "central ", log.LstdFlags|log.Lmicroseconds),
+		cycle:   cycle,
 	}
 	return s, nil
 }
@@ -52,6 +59,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/chunk-servers", s.handleChunkServers)
 	mux.HandleFunc("/lookup", s.handleLookup)
+	mux.HandleFunc("/time", s.handleTime)
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.ListenAddress, s.cfg.HTTPPort)
 	s.httpSrv = &http.Server{
@@ -87,6 +95,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleChunkServers(w http.ResponseWriter, r *http.Request) {
 	servers := s.cluster.Processes()
 	writeJSON(w, servers)
+}
+
+func (s *Server) handleTime(w http.ResponseWriter, r *http.Request) {
+	state := s.cycle.State(time.Now())
+	writeJSON(w, state)
 }
 
 func (s *Server) handleLookup(w http.ResponseWriter, r *http.Request) {

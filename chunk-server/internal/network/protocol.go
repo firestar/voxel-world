@@ -72,6 +72,7 @@ type BlockChange struct {
 	HP       float64 `json:"hp"`
 	MaxHP    float64 `json:"maxHp"`
 	Reason   string  `json:"reason"`
+	Light    float64 `json:"lightEmission,omitempty"`
 }
 
 type NeighborHello struct {

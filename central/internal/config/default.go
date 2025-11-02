@@ -18,6 +18,8 @@ func Default() Config {
 			ChunkWidth:  512,
 			ChunkDepth:  512,
 			ChunkHeight: 2048,
+			DayLength:   "20m",
+			InitialHour: 12.0,
 			Blocks:      DefaultBlocks(),
 		},
 		Cluster: ClusterConfig{

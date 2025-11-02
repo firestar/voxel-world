@@ -27,6 +27,7 @@ type Block struct {
 	Weight          float64
 	ResourceYield   map[string]float64
 	Metadata        map[string]any
+	LightEmission   float64
 }
 
 // Chunk stores a dense block grid and metadata for physics and pathing.

@@ -39,6 +39,7 @@ export interface BlockChangePayload {
   hp: number;
   maxHp: number;
   reason: string;
+  lightEmission?: number;
 }
 
 export interface ChunkDeltaPayload {
@@ -80,6 +81,18 @@ export interface ConnectionState {
   status: 'idle' | 'connecting' | 'connected' | 'error';
   message: string;
   servers?: ChunkServerInfo[];
+}
+
+export type DayPhase = 'dawn' | 'day' | 'dusk' | 'night';
+
+export interface WorldTimeState {
+  timeOfDay: number;
+  progress: number;
+  phase: DayPhase;
+  sunAngle: number;
+  sunPosition: { x: number; y: number; z: number };
+  sunLightIntensity: number;
+  ambientIntensity: number;
 }
 
 export function encodeEnvelope(

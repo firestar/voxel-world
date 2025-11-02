@@ -79,6 +79,7 @@ func (d *deltaAccumulator) flush(serverID string, seq *uint64) []network.ChunkDe
 				HP:       change.After.HitPoints,
 				MaxHP:    change.After.MaxHitPoints,
 				Reason:   string(change.Reason),
+				Light:    change.After.LightEmission,
 			})
 		}
 		deltas = append(deltas, delta)
