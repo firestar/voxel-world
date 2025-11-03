@@ -37,7 +37,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p ../dist/${{ matrix.goos }}-${{ matrix.goarch }}
-          go build -o ../dist/${{ matrix.goos }}-${{ matrix.goarch }}/central${{ matrix.ext }} ./cmd/central
+          OUTPUT_DIR=../dist/${{ matrix.goos }}-${{ matrix.goarch }}
+          OUTPUT_NAME=central-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          go build -o "$OUTPUT_DIR/$OUTPUT_NAME" ./cmd/central
 
       - name: Build chunk server
         working-directory: chunk-server
@@ -46,7 +48,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p ../dist/${{ matrix.goos }}-${{ matrix.goarch }}
-          go build -o ../dist/${{ matrix.goos }}-${{ matrix.goarch }}/chunk-server${{ matrix.ext }} ./cmd/chunkserver
+          OUTPUT_DIR=../dist/${{ matrix.goos }}-${{ matrix.goarch }}
+          OUTPUT_NAME=chunk-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          go build -o "$OUTPUT_DIR/$OUTPUT_NAME" ./cmd/chunkserver
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
