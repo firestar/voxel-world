@@ -40,9 +40,7 @@ jobs:
           fi
 
           CURRENT_VERSION=$(cat "$VERSION_FILE")
-          IFS='.' read -r MAJOR MINOR PATCH <<EOF_VERSION
-$CURRENT_VERSION
-EOF_VERSION
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
           case "${{ github.event.inputs.release_type }}" in
             major)
