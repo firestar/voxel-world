@@ -83,6 +83,33 @@ jobs:
           pattern: voxel-client-*
           path: release-assets
 
+      - name: Create zipped release assets
+        run: |
+          set -euo pipefail
+          if [ ! -d release-assets ]; then
+            echo "No artifacts downloaded" >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          cd release-assets
+          for entry in voxel-client-*; do
+            if [ -d "$entry" ]; then
+              zipname="${entry}.zip"
+              echo "Zipping directory $entry -> $zipname"
+              rm -f "$zipname"
+              (cd "$entry" && zip -r "../$zipname" .)
+            elif [ -f "$entry" ]; then
+              zipname="${entry}.zip"
+              echo "Zipping file $entry -> $zipname"
+              rm -f "$zipname"
+              zip -j "$zipname" "$entry"
+            fi
+          done
+          if [ "$(ls -1 voxel-client-*.zip 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "No zipped artifacts were created" >&2
+            exit 1
+          fi
+
       - name: Collect asset list
         id: assets
         run: |
@@ -92,7 +119,7 @@ jobs:
           fi
           {
             echo 'files<<EOF'
-            find release-assets -type f
+            find release-assets -maxdepth 1 -type f -name 'voxel-client-*.zip'
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
