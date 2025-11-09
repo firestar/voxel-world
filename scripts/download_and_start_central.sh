@@ -40,7 +40,7 @@ chmod +x "${CHUNK_BIN}"
 
 fetch "https://raw.githubusercontent.com/${REPO}/main/central/central.yaml" "${CONFIG_DIR}/central.yaml"
 for cfg in chunk-east.json chunk-west.json; do
-  fetch "https://raw.githubusercontent.com/${REPO}/main/chunk-server/configs/${cfg}" "${CONFIG_DIR}/${cfg}"
+  fetch "https://raw.githubusercontent.com/${REPO}/main/central/configs/${cfg}" "${CONFIG_DIR}/${cfg}"
 done
 
 tmp_config="${CONFIG_DIR}/central.yaml.tmp"
