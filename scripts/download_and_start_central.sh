@@ -22,7 +22,7 @@ WORKDIR=${VOXEL_WORLD_HOME:-"${PWD}/voxel-world-${VERSION}"}
 mkdir -p "${WORKDIR}" "${WORKDIR}/configs"
 
 CENTRAL_BIN="${WORKDIR}/central"
-CHUNK_BIN="${WORKDIR}/chunk-server"
+CHUNK_BIN="${WORKDIR}/chunkserver"
 CONFIG_DIR="${WORKDIR}/configs"
 
 fetch() {
