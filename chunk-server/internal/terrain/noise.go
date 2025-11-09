@@ -2,8 +2,12 @@ package terrain
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math"
+	"runtime"
+	"sync"
+	"unsafe"
 
 	"chunkserver/internal/config"
 	"chunkserver/internal/world"
@@ -39,41 +43,121 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 
 	log.Printf("chunk %v generation progress: 0%%", coord)
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	buffer := newChunkWriteBuffer(chunk, dim, 1<<30)
+
+	type columnTask struct {
+		localX int
+		localY int
+	}
+
+	type columnResult struct {
+		localX int
+		localY int
+		column []world.Block
+		err    error
+	}
+
+	workers := runtime.GOMAXPROCS(0)
+	if workers <= 0 {
+		workers = 1
+	}
+
+	tasks := make(chan columnTask)
+	results := make(chan columnResult)
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range tasks {
+				if err := ctx.Err(); err != nil {
+					select {
+					case results <- columnResult{err: err}:
+					default:
+					}
+					return
+				}
+
+				globalX := bounds.Min.X + task.localX
+				globalY := bounds.Min.Y + task.localY
+				noise := g.fractalNoise(float64(globalX), float64(globalY))
+
+				surfaceHeight := g.computeSurfaceHeight(noise)
+				surfaceHeight = clampInt(surfaceHeight, bounds.Min.Z, bounds.Max.Z)
+
+				column := g.populateColumn(bounds, dim, task.localX, task.localY, surfaceHeight, noise)
+				column = g.seedMineralsInColumn(column, task.localX, task.localY, globalX, globalY, bounds, dim, surfaceHeight)
+
+				select {
+				case results <- columnResult{localX: task.localX, localY: task.localY, column: column}:
+				case <-ctx.Done():
+					if err := ctx.Err(); err != nil {
+						select {
+						case results <- columnResult{err: err}:
+						default:
+						}
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	go func() {
+		defer close(tasks)
+		for x := 0; x < dim.Width; x++ {
+			for y := 0; y < dim.Depth; y++ {
+				select {
+				case <-ctx.Done():
+					return
+				case tasks <- columnTask{localX: x, localY: y}:
+				}
+			}
+		}
+	}()
+
 	generatedColumns := 0
 	nextLogPercent := 10
 	loggedComplete := false
 
-	for x := 0; x < dim.Width; x++ {
-		for y := 0; y < dim.Depth; y++ {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
+	for result := range results {
+		if result.err != nil {
+			cancel()
+			return nil, result.err
+		}
+
+		if err := buffer.Store(result.localX, result.localY, result.column); err != nil {
+			cancel()
+			return nil, err
+		}
+
+		generatedColumns++
+		progress := generatedColumns * 100 / totalColumns
+		if progress >= nextLogPercent {
+			if progress > 100 {
+				progress = 100
 			}
-
-			globalX := bounds.Min.X + x
-			globalY := bounds.Min.Y + y
-			noise := g.fractalNoise(float64(globalX), float64(globalY))
-
-			surfaceHeight := g.computeSurfaceHeight(noise)
-			surfaceHeight = clampInt(surfaceHeight, bounds.Min.Z, bounds.Max.Z)
-
-			g.populateColumn(chunk, bounds, x, y, surfaceHeight, noise)
-			g.seedMinerals(chunk, x, y, globalX, globalY, bounds, dim, surfaceHeight)
-
-			generatedColumns++
-			progress := generatedColumns * 100 / totalColumns
-			if progress >= nextLogPercent {
-				if progress > 100 {
-					progress = 100
-				}
-				log.Printf("chunk %v generation progress: %d%%", coord, progress)
-				if progress >= 100 {
-					loggedComplete = true
-					nextLogPercent = 110
-				} else {
-					nextLogPercent = ((progress / 10) + 1) * 10
-				}
+			log.Printf("chunk %v generation progress: %d%%", coord, progress)
+			if progress >= 100 {
+				loggedComplete = true
+				nextLogPercent = 110
+			} else {
+				nextLogPercent = ((progress / 10) + 1) * 10
 			}
 		}
+	}
+
+	if err := buffer.Flush(); err != nil {
+		return nil, err
 	}
 
 	if !loggedComplete {
@@ -83,14 +167,13 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 	return chunk, nil
 }
 
-func (g *NoiseGenerator) populateColumn(chunk *world.Chunk, bounds world.Bounds, localX, localY int, surfaceHeight int, noise float64) {
-	dim := chunk.Dimensions()
+func (g *NoiseGenerator) populateColumn(bounds world.Bounds, dim world.Dimensions, localX, localY int, surfaceHeight int, noise float64) []world.Block {
 	maxLocalZ := surfaceHeight - bounds.Min.Z
 	if maxLocalZ >= dim.Height {
 		maxLocalZ = dim.Height - 1
 	}
 	if maxLocalZ < 0 {
-		return
+		return nil
 	}
 
 	globalX := bounds.Min.X + localX
@@ -101,7 +184,7 @@ func (g *NoiseGenerator) populateColumn(chunk *world.Chunk, bounds world.Bounds,
 		globalZ := bounds.Min.Z + localZ
 		column[localZ] = g.composeTerrainBlock(globalX, globalY, globalZ, surfaceHeight, noise)
 	}
-	chunk.SetColumnBlocks(localX, localY, column)
+	return column
 }
 
 func (g *NoiseGenerator) composeTerrainBlock(globalX, globalY, globalZ int, surfaceHeight int, noise float64) world.Block {
@@ -188,7 +271,10 @@ func (g *NoiseGenerator) computeSurfaceHeight(noise float64) int {
 	return int(float64(g.surface) + noise*g.cfg.Amplitude)
 }
 
-func (g *NoiseGenerator) seedMinerals(chunk *world.Chunk, localX, localY, globalX, globalY int, bounds world.Bounds, dim world.Dimensions, surfaceHeight int) {
+func (g *NoiseGenerator) seedMineralsInColumn(column []world.Block, localX, localY, globalX, globalY int, bounds world.Bounds, dim world.Dimensions, surfaceHeight int) []world.Block {
+	if len(column) == 0 {
+		return column
+	}
 	for mineral, density := range g.economy.ResourceSpawnDensity {
 		if density <= 0 {
 			continue
@@ -210,8 +296,12 @@ func (g *NoiseGenerator) seedMinerals(chunk *world.Chunk, localX, localY, global
 			continue
 		}
 
-		block, ok := chunk.LocalBlock(localX, localY, localZ)
-		if !ok || block.Type == world.BlockAir {
+		if localZ >= len(column) {
+			continue
+		}
+
+		block := column[localZ]
+		if block.Type == world.BlockAir {
 			continue
 		}
 		if block.ResourceYield == nil {
@@ -229,8 +319,71 @@ func (g *NoiseGenerator) seedMinerals(chunk *world.Chunk, localX, localY, global
 			block.HitPoints = block.MaxHitPoints
 		}
 		block.Weight += 3
-		chunk.SetLocalBlock(localX, localY, localZ, block)
+		column[localZ] = block
 	}
+	return column
+}
+
+type chunkWriteBuffer struct {
+	chunk      *world.Chunk
+	dim        world.Dimensions
+	threshold  int64
+	columns    map[int][]world.Block
+	usageBytes int64
+}
+
+func newChunkWriteBuffer(chunk *world.Chunk, dim world.Dimensions, threshold int64) *chunkWriteBuffer {
+	if threshold <= 0 {
+		threshold = 1 << 30
+	}
+	return &chunkWriteBuffer{
+		chunk:     chunk,
+		dim:       dim,
+		threshold: threshold,
+		columns:   make(map[int][]world.Block),
+	}
+}
+
+func (b *chunkWriteBuffer) Store(localX, localY int, column []world.Block) error {
+	if b == nil {
+		return fmt.Errorf("chunk write buffer is nil")
+	}
+	idx := b.index(localX, localY)
+	b.columns[idx] = column
+	b.usageBytes += columnMemory(column)
+	if b.usageBytes >= b.threshold {
+		return b.Flush()
+	}
+	return nil
+}
+
+func (b *chunkWriteBuffer) Flush() error {
+	if b == nil || len(b.columns) == 0 {
+		b.usageBytes = 0
+		return nil
+	}
+	for idx, column := range b.columns {
+		localX := idx % b.dim.Width
+		localY := idx / b.dim.Width
+		if ok := b.chunk.SetColumnBlocks(localX, localY, column); !ok {
+			return fmt.Errorf("chunk %v failed to persist column (%d,%d)", b.chunk.Key, localX, localY)
+		}
+	}
+	b.columns = make(map[int][]world.Block)
+	b.usageBytes = 0
+	return nil
+}
+
+func (b *chunkWriteBuffer) index(localX, localY int) int {
+	return localY*b.dim.Width + localX
+}
+
+func columnMemory(column []world.Block) int64 {
+	if len(column) == 0 {
+		return 0
+	}
+	blockSize := int64(unsafe.Sizeof(world.Block{}))
+	return int64(len(column)) * blockSize
 }
 
 func (g *NoiseGenerator) fractalNoise(x, y float64) float64 {
