@@ -25,13 +25,13 @@ func TestDiskBlockStorageRotatesChunkFiles(t *testing.T) {
 		blocks[i] = Block{Type: BlockSolid, Material: strings.Repeat("m", 64), Texture: strings.Repeat("t", 64)}
 	}
 
-	var payload bytes.Buffer
-	if err := gob.NewEncoder(&payload).Encode(blocks); err != nil {
+	payload, err := encodeColumnPayload(blocks)
+	if err != nil {
 		t.Fatalf("encode blocks: %v", err)
 	}
 
 	originalLimit := maxChunkFileSize
-	maxChunkFileSize = int64(9 + payload.Len())
+	maxChunkFileSize = int64(9 + len(payload))
 	defer func() { maxChunkFileSize = originalLimit }()
 
 	if err := storage.SaveColumn(0, blocks); err != nil {
@@ -92,16 +92,45 @@ func TestDiskBlockStorageRejectsOversizedEntry(t *testing.T) {
 
 	blocks := []Block{{Type: BlockSolid, Material: strings.Repeat("m", 8)}}
 
-	var payload bytes.Buffer
-	if err := gob.NewEncoder(&payload).Encode(blocks); err != nil {
+	payload, err := encodeColumnPayload(blocks)
+	if err != nil {
 		t.Fatalf("encode blocks: %v", err)
 	}
 
 	originalLimit := maxChunkFileSize
-	maxChunkFileSize = int64(9 + payload.Len() - 1)
+	maxChunkFileSize = int64(9 + len(payload) - 1)
 	defer func() { maxChunkFileSize = originalLimit }()
 
 	if err := storage.SaveColumn(0, blocks); err == nil {
 		t.Fatalf("expected SaveColumn to fail for oversized entry")
+	}
+}
+
+func TestCompressColumnReducesRuns(t *testing.T) {
+	block := Block{Type: BlockSolid, Material: "stone"}
+	blocks := []Block{block, block, block, block}
+
+	runs := compressColumn(blocks)
+	if len(runs) != 1 {
+		t.Fatalf("expected single run, got %d", len(runs))
+	}
+	if runs[0].Count != len(blocks) {
+		t.Fatalf("expected run length %d, got %d", len(blocks), runs[0].Count)
+	}
+}
+
+func TestDecodeColumnPayloadLegacyFallback(t *testing.T) {
+	legacy := []Block{{Type: BlockSolid}}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(legacy); err != nil {
+		t.Fatalf("encode legacy: %v", err)
+	}
+
+	decoded, err := decodeColumnPayload(buf.Bytes())
+	if err != nil {
+		t.Fatalf("decode legacy: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, legacy) {
+		t.Fatalf("legacy decode mismatch")
 	}
 }

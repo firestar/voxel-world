@@ -22,6 +22,10 @@ const (
 
 var maxChunkFileSize int64 = 128 * 1024 * 1024
 
+const (
+	columnEncodingVersion = 1
+)
+
 func init() {
 	gob.Register(map[string]any{})
 	gob.Register(map[string]float64{})
@@ -194,28 +198,28 @@ func (s *diskBlockStorage) LoadColumn(index int) ([]Block, bool, error) {
 	if _, err := f.ReadAt(payload, meta.offset+int64(len(header))); err != nil {
 		return nil, false, fmt.Errorf("read payload: %w", err)
 	}
-	var blocks []Block
-	if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&blocks); err != nil {
+	blocks, err := decodeColumnPayload(payload)
+	if err != nil {
 		return nil, false, fmt.Errorf("decode column: %w", err)
 	}
 	return blocks, true, nil
 }
 
 func (s *diskBlockStorage) SaveColumn(index int, blocks []Block) error {
-	var payload bytes.Buffer
-	if err := gob.NewEncoder(&payload).Encode(blocks); err != nil {
+	payload, err := encodeColumnPayload(blocks)
+	if err != nil {
 		return fmt.Errorf("encode column: %w", err)
 	}
 
 	header := make([]byte, 9)
 	header[0] = diskOpSet
 	binary.LittleEndian.PutUint32(header[1:5], uint32(index))
-	binary.LittleEndian.PutUint32(header[5:9], uint32(payload.Len()))
+	binary.LittleEndian.PutUint32(header[5:9], uint32(len(payload)))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	meta, err := s.appendRecord(header, payload.Bytes())
+	meta, err := s.appendRecord(header, payload)
 	if err != nil {
 		return err
 	}
@@ -316,5 +320,173 @@ func (s *diskBlockStorage) appendRecord(header, payload []byte) (diskRecordMeta,
 			return diskRecordMeta{}, fmt.Errorf("close chunk file %s: %w", path, err)
 		}
 		return diskRecordMeta{part: s.lastPart, offset: offset, size: uint32(len(payload))}, nil
+	}
+}
+
+type columnRun struct {
+	Count int
+	Block Block
+}
+
+type columnEncoding struct {
+	Version int
+	Runs    []columnRun
+}
+
+func encodeColumnPayload(blocks []Block) ([]byte, error) {
+	encoding := columnEncoding{Version: columnEncodingVersion}
+	encoding.Runs = compressColumn(blocks)
+
+	var payload bytes.Buffer
+	if err := gob.NewEncoder(&payload).Encode(&encoding); err != nil {
+		return nil, err
+	}
+	return payload.Bytes(), nil
+}
+
+func decodeColumnPayload(payload []byte) ([]Block, error) {
+	if len(payload) == 0 {
+		return nil, nil
+	}
+
+	var encoding columnEncoding
+	if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&encoding); err == nil {
+		switch encoding.Version {
+		case columnEncodingVersion:
+			return expandColumn(encoding.Runs), nil
+		default:
+			return nil, fmt.Errorf("unsupported column encoding version %d", encoding.Version)
+		}
+	}
+
+	// Backwards compatibility: attempt to decode the legacy []Block payload.
+	var legacy []Block
+	if err := gob.NewDecoder(bytes.NewReader(payload)).Decode(&legacy); err != nil {
+		return nil, err
+	}
+	return legacy, nil
+}
+
+func compressColumn(blocks []Block) []columnRun {
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	runs := make([]columnRun, 0, 8)
+	for _, block := range blocks {
+		block = sanitizeBlock(block)
+		n := len(runs)
+		if n > 0 && blocksEqual(runs[n-1].Block, block) {
+			runs[n-1].Count++
+			continue
+		}
+		runs = append(runs, columnRun{Count: 1, Block: duplicateBlock(block)})
+	}
+	return runs
+}
+
+func expandColumn(runs []columnRun) []Block {
+	if len(runs) == 0 {
+		return nil
+	}
+	total := 0
+	for _, run := range runs {
+		total += run.Count
+	}
+	column := make([]Block, 0, total)
+	for _, run := range runs {
+		for i := 0; i < run.Count; i++ {
+			column = append(column, duplicateBlock(run.Block))
+		}
+	}
+	return column
+}
+
+func sanitizeBlock(block Block) Block {
+	if len(block.ResourceYield) == 0 {
+		block.ResourceYield = nil
+	}
+	if len(block.Metadata) == 0 {
+		block.Metadata = nil
+	}
+	return block
+}
+
+func duplicateBlock(block Block) Block {
+	clone := block
+	if block.ResourceYield != nil {
+		clone.ResourceYield = make(map[string]float64, len(block.ResourceYield))
+		for k, v := range block.ResourceYield {
+			clone.ResourceYield[k] = v
+		}
+	}
+	if block.Metadata != nil {
+		clone.Metadata = make(map[string]any, len(block.Metadata))
+		for k, v := range block.Metadata {
+			clone.Metadata[k] = v
+		}
+	}
+	return clone
+}
+
+func blocksEqual(a, b Block) bool {
+	if a.Type != b.Type ||
+		a.Material != b.Material ||
+		a.Color != b.Color ||
+		a.Texture != b.Texture ||
+		a.HitPoints != b.HitPoints ||
+		a.MaxHitPoints != b.MaxHitPoints ||
+		a.ConnectingForce != b.ConnectingForce ||
+		a.Weight != b.Weight ||
+		a.LightEmission != b.LightEmission {
+		return false
+	}
+
+	if len(a.ResourceYield) != len(b.ResourceYield) {
+		return false
+	}
+	for k, v := range a.ResourceYield {
+		if vb, ok := b.ResourceYield[k]; !ok || vb != v {
+			return false
+		}
+	}
+
+	if len(a.Metadata) != len(b.Metadata) {
+		return false
+	}
+	for k, v := range a.Metadata {
+		vb, ok := b.Metadata[k]
+		if !ok {
+			return false
+		}
+		if !metadataValueEqual(v, vb) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func metadataValueEqual(a, b any) bool {
+	switch va := a.(type) {
+	case string:
+		vb, ok := b.(string)
+		return ok && va == vb
+	case bool:
+		vb, ok := b.(bool)
+		return ok && va == vb
+	case int:
+		vb, ok := b.(int)
+		return ok && va == vb
+	case int64:
+		vb, ok := b.(int64)
+		return ok && va == vb
+	case float64:
+		vb, ok := b.(float64)
+		return ok && va == vb
+	case nil:
+		return b == nil
+	default:
+		return fmt.Sprintf("%v", va) == fmt.Sprintf("%v", b)
 	}
 }
