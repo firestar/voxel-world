@@ -72,13 +72,13 @@ func (d *deltaAccumulator) flush(serverID string, seq *uint64) []network.ChunkDe
 				X:        coord.X,
 				Y:        coord.Y,
 				Z:        coord.Z,
-				Type:     string(change.After.Type),
+				Type:     encodeBlockType(change.After.Type),
 				Material: change.After.Material,
 				Color:    change.After.Color,
 				Texture:  change.After.Texture,
 				HP:       change.After.HitPoints,
 				MaxHP:    change.After.MaxHitPoints,
-				Reason:   string(change.Reason),
+				Reason:   encodeChangeReason(change.Reason),
 				Light:    change.After.LightEmission,
 			})
 		}
@@ -94,4 +94,34 @@ func priority(reason world.ChangeReason) int {
 		return v
 	}
 	return 0
+}
+
+func encodeBlockType(t world.BlockType) network.BlockTypeCode {
+	switch t {
+	case world.BlockAir:
+		return network.BlockTypeAir
+	case world.BlockSolid:
+		return network.BlockTypeSolid
+	case world.BlockUnstable:
+		return network.BlockTypeUnstable
+	case world.BlockMineral:
+		return network.BlockTypeMineral
+	case world.BlockExplosive:
+		return network.BlockTypeExplosive
+	default:
+		return network.BlockTypeUnknown
+	}
+}
+
+func encodeChangeReason(reason world.ChangeReason) network.ChangeReasonCode {
+	switch reason {
+	case world.ReasonDamage:
+		return network.ChangeReasonDamage
+	case world.ReasonDestroy:
+		return network.ChangeReasonDestroy
+	case world.ReasonCollapse:
+		return network.ChangeReasonCollapse
+	default:
+		return network.ChangeReasonUnknown
+	}
 }

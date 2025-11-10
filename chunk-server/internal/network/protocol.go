@@ -61,18 +61,41 @@ type ChunkDelta struct {
 	Blocks    []BlockChange `json:"blocks"`
 }
 
+// BlockTypeCode encodes well-known block types into a compact numeric value for
+// transmission.
+type BlockTypeCode uint8
+
+const (
+	BlockTypeUnknown BlockTypeCode = iota
+	BlockTypeAir
+	BlockTypeSolid
+	BlockTypeUnstable
+	BlockTypeMineral
+	BlockTypeExplosive
+)
+
+// ChangeReasonCode encodes change reasons into a compact numeric value.
+type ChangeReasonCode uint8
+
+const (
+	ChangeReasonUnknown ChangeReasonCode = iota
+	ChangeReasonDamage
+	ChangeReasonDestroy
+	ChangeReasonCollapse
+)
+
 type BlockChange struct {
-	X        int     `json:"x"`
-	Y        int     `json:"y"`
-	Z        int     `json:"z"`
-	Type     string  `json:"type"`
-	Material string  `json:"material,omitempty"`
-	Color    string  `json:"color,omitempty"`
-	Texture  string  `json:"texture,omitempty"`
-	HP       float64 `json:"hp"`
-	MaxHP    float64 `json:"maxHp"`
-	Reason   string  `json:"reason"`
-	Light    float64 `json:"lightEmission,omitempty"`
+	X        int              `json:"x"`
+	Y        int              `json:"y"`
+	Z        int              `json:"z"`
+	Type     BlockTypeCode    `json:"type"`
+	Material string           `json:"material,omitempty"`
+	Color    string           `json:"color,omitempty"`
+	Texture  string           `json:"texture,omitempty"`
+	HP       float64          `json:"hp"`
+	MaxHP    float64          `json:"maxHp"`
+	Reason   ChangeReasonCode `json:"reason"`
+	Light    float64          `json:"lightEmission,omitempty"`
 }
 
 type NeighborHello struct {

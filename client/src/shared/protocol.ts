@@ -28,28 +28,84 @@ export interface ChunkSummaryPayload {
   blockCount: number;
 }
 
-export interface BlockChangePayload {
+export type BlockType =
+  | 'unknown'
+  | 'air'
+  | 'solid'
+  | 'unstable'
+  | 'mineral'
+  | 'explosive';
+
+export const BlockTypeCodes = {
+  Unknown: 0,
+  Air: 1,
+  Solid: 2,
+  Unstable: 3,
+  Mineral: 4,
+  Explosive: 5
+} as const;
+
+export type BlockTypeCode = (typeof BlockTypeCodes)[keyof typeof BlockTypeCodes];
+
+const BLOCK_TYPE_NAMES: ReadonlyArray<BlockType> = [
+  'unknown',
+  'air',
+  'solid',
+  'unstable',
+  'mineral',
+  'explosive'
+];
+
+export type ChangeReason = 'unknown' | 'damage' | 'destroy' | 'collapse';
+
+export const ChangeReasonCodes = {
+  Unknown: 0,
+  Damage: 1,
+  Destroy: 2,
+  Collapse: 3
+} as const;
+
+export type ChangeReasonCode =
+  (typeof ChangeReasonCodes)[keyof typeof ChangeReasonCodes];
+
+const CHANGE_REASON_NAMES: ReadonlyArray<ChangeReason> = [
+  'unknown',
+  'damage',
+  'destroy',
+  'collapse'
+];
+
+export interface EncodedBlockChangePayload {
   x: number;
   y: number;
   z: number;
-  type: string;
+  type: BlockTypeCode;
   material?: string;
   color?: string;
   texture?: string;
   hp: number;
   maxHp: number;
-  reason: string;
+  reason: ChangeReasonCode;
   lightEmission?: number;
 }
 
-export interface ChunkDeltaPayload {
+export type BlockChangePayload = Omit<EncodedBlockChangePayload, 'type' | 'reason'> & {
+  type: BlockType;
+  reason: ChangeReason;
+};
+
+export interface EncodedChunkDeltaPayload {
   serverId: string;
   chunkX: number;
   chunkY: number;
   seq: number;
   timestamp: string;
-  blocks: BlockChangePayload[];
+  blocks: EncodedBlockChangePayload[];
 }
+
+export type ChunkDeltaPayload = Omit<EncodedChunkDeltaPayload, 'blocks'> & {
+  blocks: BlockChangePayload[];
+};
 
 export interface ChunkServerInfo {
   id: string;
@@ -116,4 +172,31 @@ export function parseEnvelope(data: Buffer): Envelope | null {
   } catch (err) {
     return null;
   }
+}
+
+export function decodeBlockType(code: BlockTypeCode): BlockType {
+  return BLOCK_TYPE_NAMES[code] ?? 'unknown';
+}
+
+export function decodeChangeReason(code: ChangeReasonCode): ChangeReason {
+  return CHANGE_REASON_NAMES[code] ?? 'unknown';
+}
+
+export function decodeBlockChange(
+  change: EncodedBlockChangePayload
+): BlockChangePayload {
+  return {
+    ...change,
+    type: decodeBlockType(change.type),
+    reason: decodeChangeReason(change.reason)
+  };
+}
+
+export function decodeChunkDeltaPayload(
+  encoded: EncodedChunkDeltaPayload
+): ChunkDeltaPayload {
+  return {
+    ...encoded,
+    blocks: encoded.blocks.map(decodeBlockChange)
+  };
 }
