@@ -7,9 +7,11 @@ import {
   ChunkServerInfo,
   ChunkSummaryEvent,
   ChunkSummaryPayload,
+  EncodedChunkDeltaPayload,
   JoinResult,
   MessageType,
   WorldTimeState,
+  decodeChunkDeltaPayload,
   encodeEnvelope,
   parseEnvelope
 } from '../shared/protocol';
@@ -206,7 +208,8 @@ export class ChunkNetworkManager {
         break;
       }
       case 'chunkDelta': {
-        const delta = env.payload as ChunkDeltaPayload;
+        const encoded = env.payload as EncodedChunkDeltaPayload;
+        const delta = decodeChunkDeltaPayload(encoded);
         this.emitDelta(server.id, delta);
         break;
       }

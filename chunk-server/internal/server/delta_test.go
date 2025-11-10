@@ -119,14 +119,14 @@ func TestDeltaAccumulatorFlushProducesNetworkDeltas(t *testing.T) {
 		if block.X != change.Coord.X || block.Y != change.Coord.Y || block.Z != change.Coord.Z {
 			t.Errorf("block coordinates mismatch: got (%d,%d,%d) want (%d,%d,%d)", block.X, block.Y, block.Z, change.Coord.X, change.Coord.Y, change.Coord.Z)
 		}
-		if block.Type != string(change.After.Type) {
-			t.Errorf("block type mismatch: got %q want %q", block.Type, change.After.Type)
+		if block.Type != encodeBlockType(change.After.Type) {
+			t.Errorf("block type mismatch: got %v want %v", block.Type, encodeBlockType(change.After.Type))
 		}
 		if block.HP != change.After.HitPoints || block.MaxHP != change.After.MaxHitPoints {
 			t.Errorf("block hp mismatch: got (%f,%f) want (%f,%f)", block.HP, block.MaxHP, change.After.HitPoints, change.After.MaxHitPoints)
 		}
-		if block.Reason != string(change.Reason) {
-			t.Errorf("reason mismatch: got %q want %q", block.Reason, change.Reason)
+		if block.Reason != encodeChangeReason(change.Reason) {
+			t.Errorf("reason mismatch: got %v want %v", block.Reason, encodeChangeReason(change.Reason))
 		}
 		delete(expectedByChunk, coord)
 	}
