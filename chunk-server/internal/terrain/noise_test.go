@@ -147,36 +147,68 @@ func TestNoiseGeneratorDeterministicForRandomWorldLocations(t *testing.T) {
 
 	randSource := rand.New(rand.NewSource(1337))
 	totalLocations := 1000
+	sampled := make(map[[2]int]struct{}, totalLocations)
 
-	for i := 0; i < totalLocations; i++ {
+	addLevel := func(set map[int]struct{}, levels *[]int, level int) {
+		if level < 0 {
+			return
+		}
+		if _, exists := set[level]; exists {
+			return
+		}
+		set[level] = struct{}{}
+		*levels = append(*levels, level)
+	}
+
+	for len(sampled) < totalLocations {
 		globalX := randSource.Intn(2_000_001) - 1_000_000
 		globalY := randSource.Intn(2_000_001) - 1_000_000
+		key := [2]int{globalX, globalY}
+		if _, exists := sampled[key]; exists {
+			continue
+		}
+		sampled[key] = struct{}{}
+		index := len(sampled) - 1
 
 		noiseA := genA.fractalNoise(float64(globalX), float64(globalY))
 		noiseB := genB.fractalNoise(float64(globalX), float64(globalY))
 		if noiseA != noiseB {
-			t.Fatalf("location %d (%d,%d): noise mismatch %f vs %f", i, globalX, globalY, noiseA, noiseB)
+			t.Fatalf("location %d (%d,%d): noise mismatch %f vs %f", index, globalX, globalY, noiseA, noiseB)
 		}
 
 		surfaceA := genA.computeSurfaceHeight(noiseA)
 		surfaceB := genB.computeSurfaceHeight(noiseB)
 		if surfaceA != surfaceB {
-			t.Fatalf("location %d (%d,%d): surface mismatch %d vs %d", i, globalX, globalY, surfaceA, surfaceB)
+			t.Fatalf("location %d (%d,%d): surface mismatch %d vs %d", index, globalX, globalY, surfaceA, surfaceB)
 		}
 
-		if i < 50 {
-			sampleLevels := []int{surfaceA, surfaceA - 1, surfaceA - 5}
-			for _, level := range sampleLevels {
-				if level < 0 {
-					continue
-				}
+		levelsSet := make(map[int]struct{}, 6)
+		var levels []int
+		addLevel(levelsSet, &levels, surfaceA)
+		addLevel(levelsSet, &levels, surfaceA-1)
+		addLevel(levelsSet, &levels, surfaceA-5)
 
-				blockA := cloneBlock(genA.composeTerrainBlock(globalX, globalY, level, surfaceA, noiseA))
-				blockB := cloneBlock(genB.composeTerrainBlock(globalX, globalY, level, surfaceB, noiseB))
-
-				if !reflect.DeepEqual(blockA, blockB) {
-					t.Fatalf("location %d (%d,%d,%d): block mismatch", i, globalX, globalY, level)
+		const maxSamplesPerLocation = 6
+		if surfaceA > 0 {
+			for len(levels) < maxSamplesPerLocation {
+				depthRange := surfaceA + 1
+				if depthRange <= 1 {
+					break
 				}
+				candidate := surfaceA - randSource.Intn(depthRange)
+				addLevel(levelsSet, &levels, candidate)
+				if candidate == 0 {
+					break
+				}
+			}
+		}
+
+		for _, level := range levels {
+			blockA := cloneBlock(genA.composeTerrainBlock(globalX, globalY, level, surfaceA, noiseA))
+			blockB := cloneBlock(genB.composeTerrainBlock(globalX, globalY, level, surfaceB, noiseB))
+
+			if !reflect.DeepEqual(blockA, blockB) {
+				t.Fatalf("location %d (%d,%d,%d): block mismatch", index, globalX, globalY, level)
 			}
 		}
 	}
