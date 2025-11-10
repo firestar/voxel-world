@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log"
+	"math/rand"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -200,6 +202,79 @@ func TestNoiseGeneratorMineralVeinsDistributeAcrossColumns(t *testing.T) {
 		}
 		if len(dist.ys) <= 1 {
 			t.Fatalf("expected %s to span multiple Y positions, columns: %#v", mineral, dist.columns)
+		}
+	}
+}
+
+func TestNoiseGeneratorDeterministicAcrossRandomLocations(t *testing.T) {
+	cfg := config.TerrainConfig{
+		Seed:        424242,
+		Frequency:   0.02,
+		Amplitude:   32,
+		Octaves:     2,
+		Persistence: 0.55,
+		Lacunarity:  2.0,
+	}
+	economy := config.EconomyConfig{ResourceSpawnDensity: map[string]float64{}}
+
+	genA := NewNoiseGenerator(cfg, economy)
+	genB := NewNoiseGenerator(cfg, economy)
+
+	dim := world.Dimensions{Width: 2, Depth: 2, Height: 16}
+	ctx := context.Background()
+
+	snapshot := func(chunk *world.Chunk) map[world.BlockCoord]world.Block {
+		blocks := make(map[world.BlockCoord]world.Block)
+		chunk.ForEachBlock(func(coord world.BlockCoord, block world.Block) bool {
+			blocks[coord] = block
+			return true
+		})
+		return blocks
+	}
+
+	r := rand.New(rand.NewSource(1337))
+	const locations = 1000
+	for i := 0; i < locations; i++ {
+		chunkCoord := world.ChunkCoord{
+			X: r.Intn(2_000_001) - 1_000_000,
+			Y: r.Intn(2_000_001) - 1_000_000,
+		}
+		bounds := world.Bounds{
+			Min: world.BlockCoord{
+				X: chunkCoord.X * dim.Width,
+				Y: chunkCoord.Y * dim.Depth,
+				Z: 0,
+			},
+			Max: world.BlockCoord{
+				X: chunkCoord.X*dim.Width + dim.Width - 1,
+				Y: chunkCoord.Y*dim.Depth + dim.Depth - 1,
+				Z: dim.Height - 1,
+			},
+		}
+
+		chunkA, err := genA.Generate(ctx, chunkCoord, bounds, dim)
+		if err != nil {
+			t.Fatalf("iteration %d: generator A error: %v", i, err)
+		}
+		chunkB, err := genB.Generate(ctx, chunkCoord, bounds, dim)
+		if err != nil {
+			t.Fatalf("iteration %d: generator B error: %v", i, err)
+		}
+
+		blocksA := snapshot(chunkA)
+		blocksB := snapshot(chunkB)
+
+		if len(blocksA) != len(blocksB) {
+			t.Fatalf("iteration %d: block count mismatch for chunk %v: %d vs %d", i, chunkCoord, len(blocksA), len(blocksB))
+		}
+		for coord, blockA := range blocksA {
+			blockB, ok := blocksB[coord]
+			if !ok {
+				t.Fatalf("iteration %d: chunk %v missing block at %v in second generation", i, chunkCoord, coord)
+			}
+			if !reflect.DeepEqual(blockA, blockB) {
+				t.Fatalf("iteration %d: chunk %v block mismatch at %v", i, chunkCoord, coord)
+			}
 		}
 	}
 }
