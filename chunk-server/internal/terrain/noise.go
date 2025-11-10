@@ -69,13 +69,13 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 		err    error
 	}
 
-	workers := runtime.GOMAXPROCS(0) * 2
+	workers := g.workerCount(totalColumns)
 	if workers <= 0 {
 		workers = 1
 	}
 
-	tasks := make(chan columnTask)
-	results := make(chan columnResult)
+	tasks := make(chan columnTask, workers)
+	results := make(chan columnResult, workers)
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -660,4 +660,29 @@ func clampInt(v, min, max int) int {
 		return max
 	}
 	return v
+}
+
+func (g *NoiseGenerator) workerCount(totalColumns int) int {
+	if totalColumns <= 0 {
+		return 0
+	}
+
+	if g.cfg.Workers > 0 {
+		if g.cfg.Workers < totalColumns {
+			return g.cfg.Workers
+		}
+		return totalColumns
+	}
+
+	workers := runtime.GOMAXPROCS(0) * 2
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > totalColumns {
+		workers = totalColumns
+	}
+	if workers <= 0 {
+		workers = 1
+	}
+	return workers
 }

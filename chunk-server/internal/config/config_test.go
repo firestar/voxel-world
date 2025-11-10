@@ -65,6 +65,13 @@ func TestValidateDetectsInvalidConfigurations(t *testing.T) {
 			wantErr: "entities.movementWorkers cannot be negative",
 		},
 		{
+			name: "negative terrain workers",
+			mutate: func(cfg *Config) {
+				cfg.Terrain.Workers = -1
+			},
+			wantErr: "terrain.workers cannot be negative",
+		},
+		{
 			name: "missing block id",
 			mutate: func(cfg *Config) {
 				cfg.Blocks[0].ID = ""
