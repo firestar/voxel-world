@@ -1,9 +1,9 @@
 listen_address: 0.0.0.0
 http_port: 28080
 world:
-  chunk_width: 512
-  chunk_depth: 512
-  chunk_height: 2048
+  chunk_width: 256
+  chunk_depth: 256
+  chunk_height: 1024
   day_length: 20m
   initial_hour: 12
   blocks:
@@ -93,16 +93,6 @@ world:
         vein_size_max: 5
     - id: unobtainium
       color: "#7F00FF"
-      spawn:
-        type: solo
-    - id: unit_lumen_panel
-      color: "#FFF3B0"
-      light_emission: 6
-      spawn:
-        type: solo
-    - id: structure_arc_lamp
-      color: "#FFE066"
-      light_emission: 10
       spawn:
         type: solo
 cluster:

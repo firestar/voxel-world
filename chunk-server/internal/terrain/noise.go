@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"runtime"
 	"sync"
+	"time"
 	"unsafe"
 
 	"chunkserver/internal/config"
@@ -20,6 +22,7 @@ type NoiseGenerator struct {
 	seed           int64
 	surface        int
 	undergroundCap int
+	randPool       sync.Pool
 }
 
 func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *NoiseGenerator {
@@ -27,8 +30,14 @@ func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *
 		cfg:            cfg,
 		economy:        economy,
 		seed:           cfg.Seed,
-		surface:        1024,
-		undergroundCap: 896,
+		surface:        768,
+		undergroundCap: 640,
+		randPool: sync.Pool{
+			New: func() any {
+				// Seed with time for uniqueness but override deterministically per use.
+				return rand.New(rand.NewSource(time.Now().UnixNano()))
+			},
+		},
 	}
 }
 
@@ -46,7 +55,7 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	buffer := newChunkWriteBuffer(chunk, dim, 1<<30)
+	buffer := newChunkWriteBuffer(chunk, dim, 1<<28)
 
 	type columnTask struct {
 		localX int
@@ -60,7 +69,7 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 		err    error
 	}
 
-	workers := runtime.GOMAXPROCS(0)
+	workers := runtime.GOMAXPROCS(0) * 2
 	if workers <= 0 {
 		workers = 1
 	}
@@ -90,7 +99,6 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 				surfaceHeight = clampInt(surfaceHeight, bounds.Min.Z, bounds.Max.Z)
 
 				column := g.populateColumn(bounds, dim, task.localX, task.localY, surfaceHeight, noise)
-				column = g.seedMineralsInColumn(column, task.localX, task.localY, globalX, globalY, bounds, dim, surfaceHeight)
 
 				select {
 				case results <- columnResult{localX: task.localX, localY: task.localY, column: column}:
@@ -154,6 +162,10 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 				nextLogPercent = ((progress / 10) + 1) * 10
 			}
 		}
+	}
+
+	if err := g.seedMineralVeins(buffer, bounds, dim); err != nil {
+		return nil, err
 	}
 
 	if err := buffer.Flush(); err != nil {
@@ -271,57 +283,221 @@ func (g *NoiseGenerator) computeSurfaceHeight(noise float64) int {
 	return int(float64(g.surface) + noise*g.cfg.Amplitude)
 }
 
-func (g *NoiseGenerator) seedMineralsInColumn(column []world.Block, localX, localY, globalX, globalY int, bounds world.Bounds, dim world.Dimensions, surfaceHeight int) []world.Block {
-	if len(column) == 0 {
-		return column
+func (g *NoiseGenerator) seedMineralVeins(buffer *chunkWriteBuffer, bounds world.Bounds, dim world.Dimensions) error {
+	if buffer == nil {
+		return fmt.Errorf("chunk write buffer is nil")
 	}
+	if len(buffer.columns) == 0 {
+		buffer.recalculateUsage()
+		return nil
+	}
+
 	for mineral, density := range g.economy.ResourceSpawnDensity {
 		if density <= 0 {
 			continue
 		}
-		hashVal := hash3(globalX, globalY, int(g.seed^int64(len(mineral))))
-		value := float64(hashVal&0xFFFF) / 0xFFFF
-		if value > density {
-			continue
-		}
 
-		targetZ := int(float64(g.undergroundCap) * value)
-		if targetZ > surfaceHeight {
-			targetZ = surfaceHeight
-		}
-		targetZ = clampInt(targetZ, bounds.Min.Z, bounds.Max.Z)
+		visited := make(map[veinCoord]struct{})
+		for localX := 0; localX < dim.Width; localX++ {
+			for localY := 0; localY < dim.Depth; localY++ {
+				column, ok := buffer.column(localX, localY)
+				if !ok || len(column) == 0 {
+					continue
+				}
 
-		localZ := targetZ - bounds.Min.Z
-		if localZ < 0 || localZ >= dim.Height {
-			continue
-		}
+				globalX := bounds.Min.X + localX
+				globalY := bounds.Min.Y + localY
+				hashVal := hash3(globalX, globalY, int(g.seed^int64(len(mineral))))
+				chance := float64(hashVal&0xFFFF) / 0xFFFF
+				if chance > density {
+					continue
+				}
 
-		if localZ >= len(column) {
-			continue
-		}
+				rng := g.random(hashVal)
+				startZ := rng.Intn(len(column))
+				start := veinCoord{X: localX, Y: localY, Z: startZ}
+				if _, already := visited[start]; already {
+					g.releaseRandom(rng)
+					continue
+				}
 
-		block := column[localZ]
-		if block.Type == world.BlockAir {
-			continue
+				placed := g.growMineralVein(buffer, dim, mineral, density, rng, start, visited)
+				g.releaseRandom(rng)
+				if placed == 0 {
+					continue
+				}
+			}
 		}
-		if block.ResourceYield == nil {
-			block.ResourceYield = make(map[string]float64)
-		}
-		block.Type = world.BlockMineral
-		block.ResourceYield[mineral] += 1
-		if block.ConnectingForce < 130 {
-			block.ConnectingForce = 130
-		}
-		if block.MaxHitPoints < 180 {
-			block.MaxHitPoints = 180
-		}
-		if block.HitPoints < block.MaxHitPoints {
-			block.HitPoints = block.MaxHitPoints
-		}
-		block.Weight += 3
-		column[localZ] = block
 	}
-	return column
+
+	buffer.recalculateUsage()
+	return nil
+}
+
+func (g *NoiseGenerator) growMineralVein(buffer *chunkWriteBuffer, dim world.Dimensions, mineral string, density float64, rng *rand.Rand, start veinCoord, visited map[veinCoord]struct{}) int {
+	queue := []veinCoord{start}
+	placed := 0
+	target := veinSizeForDensity(density, rng)
+	diagonalPlaced := false
+
+	for len(queue) > 0 && placed < target {
+		current := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+
+		if _, seen := visited[current]; seen {
+			continue
+		}
+		visited[current] = struct{}{}
+
+		if current.X < 0 || current.Y < 0 || current.Z < 0 ||
+			current.X >= dim.Width || current.Y >= dim.Depth || current.Z >= dim.Height {
+			continue
+		}
+
+		column, ok := buffer.column(current.X, current.Y)
+		if !ok || current.Z >= len(column) {
+			continue
+		}
+
+		if !g.applyMineralToBlock(column, current.Z, mineral) {
+			continue
+		}
+
+		buffer.setColumn(current.X, current.Y, column)
+		placed++
+
+		g.enqueueHorizontalNeighbor(&queue, current, dim, rng)
+		g.enqueueVerticalNeighbors(&queue, current, dim, rng)
+		g.enqueueDiagonalNeighbors(&queue, current, dim, rng)
+
+		if !diagonalPlaced && placed >= 2 {
+			if g.forceDiagonalNeighbor(&queue, current, dim, rng) {
+				diagonalPlaced = true
+			}
+		}
+	}
+
+	return placed
+}
+
+func veinSizeForDensity(density float64, rng *rand.Rand) int {
+	base := 3 + int(math.Ceil(density*4))
+	max := base + int(math.Ceil(density*6))
+	if max < base {
+		max = base
+	}
+	if base < 3 {
+		base = 3
+	}
+	if max == base {
+		return base
+	}
+	return base + rng.Intn(max-base+1)
+}
+
+func (g *NoiseGenerator) applyMineralToBlock(column []world.Block, localZ int, mineral string) bool {
+	if localZ < 0 || localZ >= len(column) {
+		return false
+	}
+	block := column[localZ]
+	if block.Type == world.BlockAir {
+		return false
+	}
+	if layer, ok := block.Metadata["layer"].(string); ok && layer == "topsoil" {
+		return false
+	}
+	if block.ResourceYield == nil {
+		block.ResourceYield = make(map[string]float64)
+	}
+	block.Type = world.BlockMineral
+	block.ResourceYield[mineral] += 1
+	if block.ConnectingForce < 130 {
+		block.ConnectingForce = 130
+	}
+	if block.MaxHitPoints < 180 {
+		block.MaxHitPoints = 180
+	}
+	if block.HitPoints < block.MaxHitPoints {
+		block.HitPoints = block.MaxHitPoints
+	}
+	block.Weight += 3
+	if block.Metadata == nil {
+		block.Metadata = make(map[string]any)
+	}
+	block.Metadata["veinResource"] = mineral
+	column[localZ] = block
+	return true
+}
+
+func (g *NoiseGenerator) enqueueHorizontalNeighbor(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) {
+	horizontalOffsets := [...]veinCoord{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}}
+	chosen := horizontalOffsets[rng.Intn(len(horizontalOffsets))]
+	g.tryEnqueue(queue, current, chosen, dim)
+	for _, off := range horizontalOffsets {
+		if rng.Float64() < 0.55 {
+			g.tryEnqueue(queue, current, off, dim)
+		}
+	}
+}
+
+func (g *NoiseGenerator) enqueueVerticalNeighbors(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) {
+	verticalOffsets := [...]veinCoord{{0, 0, 1}, {0, 0, -1}}
+	for _, off := range verticalOffsets {
+		if rng.Float64() < 0.65 {
+			g.tryEnqueue(queue, current, off, dim)
+		}
+	}
+}
+
+func (g *NoiseGenerator) enqueueDiagonalNeighbors(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) {
+	diagonalOffsets := [...]veinCoord{
+		{1, 1, 0}, {1, -1, 0}, {-1, 1, 0}, {-1, -1, 0},
+		{1, 0, 1}, {-1, 0, 1}, {0, 1, 1}, {0, -1, 1},
+		{1, 0, -1}, {-1, 0, -1}, {0, 1, -1}, {0, -1, -1},
+		{1, 1, 1}, {1, -1, 1}, {-1, 1, 1}, {-1, -1, 1},
+		{1, 1, -1}, {1, -1, -1}, {-1, 1, -1}, {-1, -1, -1},
+	}
+	for _, off := range diagonalOffsets {
+		if rng.Float64() < 0.4 {
+			g.tryEnqueue(queue, current, off, dim)
+		}
+	}
+}
+
+func (g *NoiseGenerator) forceDiagonalNeighbor(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) bool {
+	candidates := []veinCoord{{1, 1, 0}, {1, -1, 0}, {-1, 1, 0}, {-1, -1, 0}, {1, 0, 1}, {-1, 0, 1}, {0, 1, 1}, {0, -1, 1}, {1, 0, -1}, {-1, 0, -1}, {0, 1, -1}, {0, -1, -1}}
+	rng.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	})
+	for _, off := range candidates {
+		if g.tryEnqueue(queue, current, off, dim) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *NoiseGenerator) tryEnqueue(queue *[]veinCoord, current veinCoord, offset veinCoord, dim world.Dimensions) bool {
+	next := veinCoord{X: current.X + offset.X, Y: current.Y + offset.Y, Z: current.Z + offset.Z}
+	if next.X < 0 || next.Y < 0 || next.Z < 0 ||
+		next.X >= dim.Width || next.Y >= dim.Depth || next.Z >= dim.Height {
+		return false
+	}
+	*queue = append(*queue, next)
+	return true
+}
+
+func (g *NoiseGenerator) random(seed uint32) *rand.Rand {
+	r := g.randPool.Get().(*rand.Rand)
+	r.Seed(int64(seed)<<1 | 1)
+	return r
+}
+
+func (g *NoiseGenerator) releaseRandom(r *rand.Rand) {
+	if r == nil {
+		return
+	}
+	g.randPool.Put(r)
 }
 
 type chunkWriteBuffer struct {
@@ -330,6 +506,12 @@ type chunkWriteBuffer struct {
 	threshold  int64
 	columns    map[int][]world.Block
 	usageBytes int64
+}
+
+type veinCoord struct {
+	X int
+	Y int
+	Z int
 }
 
 func newChunkWriteBuffer(chunk *world.Chunk, dim world.Dimensions, threshold int64) *chunkWriteBuffer {
@@ -376,6 +558,32 @@ func (b *chunkWriteBuffer) Flush() error {
 
 func (b *chunkWriteBuffer) index(localX, localY int) int {
 	return localY*b.dim.Width + localX
+}
+
+func (b *chunkWriteBuffer) column(localX, localY int) ([]world.Block, bool) {
+	if b == nil {
+		return nil, false
+	}
+	column, ok := b.columns[b.index(localX, localY)]
+	return column, ok
+}
+
+func (b *chunkWriteBuffer) setColumn(localX, localY int, column []world.Block) {
+	if b == nil {
+		return
+	}
+	b.columns[b.index(localX, localY)] = column
+}
+
+func (b *chunkWriteBuffer) recalculateUsage() {
+	if b == nil {
+		return
+	}
+	var total int64
+	for _, column := range b.columns {
+		total += columnMemory(column)
+	}
+	b.usageBytes = total
 }
 
 func columnMemory(column []world.Block) int64 {

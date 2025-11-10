@@ -209,9 +209,9 @@ func Default() *Config {
 			MaxConcurrentLoads: 4,
 		},
 		Chunk: ChunkConfig{
-			Width:         512,
-			Depth:         512,
-			Height:        2048,
+			Width:         256,
+			Depth:         256,
+			Height:        1024,
 			ChunksPerAxis: 32,
 		},
 		Network: NetworkConfig{
@@ -234,7 +234,7 @@ func Default() *Config {
 		Terrain: TerrainConfig{
 			Seed:        1337,
 			Frequency:   0.003,
-			Amplitude:   512,
+			Amplitude:   384,
 			Octaves:     4,
 			Persistence: 0.45,
 			Lacunarity:  2.0,
@@ -373,7 +373,5 @@ func defaultBlockDefinitions() []BlockDefinition {
 		{ID: "silver", Color: "#C0C0C0", Spawn: BlockSpawnConfig{Type: "vein", VeinSizeMin: 3, VeinSizeMax: 8}},
 		{ID: "uranium", Color: "#6B8E23", Spawn: BlockSpawnConfig{Type: "vein", VeinSizeMin: 2, VeinSizeMax: 5}},
 		{ID: "unobtainium", Color: "#7F00FF", Spawn: BlockSpawnConfig{Type: "solo"}},
-		{ID: "unit_lumen_panel", Color: "#FFF3B0", Spawn: BlockSpawnConfig{Type: "solo"}, LightEmission: 6.0},
-		{ID: "structure_arc_lamp", Color: "#FFE066", Spawn: BlockSpawnConfig{Type: "solo"}, LightEmission: 10.0},
 	}
 }

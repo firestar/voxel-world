@@ -15,9 +15,9 @@ func Default() Config {
 		ListenAddress: "0.0.0.0",
 		HTTPPort:      28080,
 		World: WorldConfig{
-			ChunkWidth:  512,
-			ChunkDepth:  512,
-			ChunkHeight: 2048,
+			ChunkWidth:  256,
+			ChunkDepth:  256,
+			ChunkHeight: 1024,
 			DayLength:   "20m",
 			InitialHour: 12.0,
 			Blocks:      DefaultBlocks(),
