@@ -4,7 +4,7 @@ Chunk server prototype for the RTS voxel engine. Handles chunk ownership, entity
 
 ## Requirements Recap
 
-- Each chunk is `512x512x2048` blocks.
+- Each chunk is `256x256x1024` blocks.
 - A chunk server owns a `32x32` chunk grid (default, configurable).
 - World coordinates must be global; chunk servers know their XYZ span.
 - Supports unlimited chunk grids by spinning up more servers; neighbor servers exchange adjacency info.
@@ -56,9 +56,9 @@ Example `central.yaml` snippet configuring adjacent chunk servers:
 listen_address: 0.0.0.0
 http_port: 28080
 world:
-  chunk_width: 512
-  chunk_depth: 512
-  chunk_height: 2048
+  chunk_width: 256
+  chunk_depth: 256
+  chunk_height: 1024
 chunk_servers:
   - id: chunk-east-0
     global_origin:

@@ -105,9 +105,9 @@ func defaultChunkServerConfig() chunkServerConfig {
 			MaxConcurrentLoads: 4,
 		},
 		Chunk: chunkServerChunkConfig{
-			Width:         512,
-			Depth:         512,
-			Height:        2048,
+			Width:         256,
+			Depth:         256,
+			Height:        1024,
 			ChunksPerAxis: 32,
 		},
 		Network: chunkServerNetworkConfig{
@@ -130,7 +130,7 @@ func defaultChunkServerConfig() chunkServerConfig {
 		Terrain: chunkServerTerrainConfig{
 			Seed:        1337,
 			Frequency:   0.003,
-			Amplitude:   512,
+			Amplitude:   384,
 			Octaves:     4,
 			Persistence: 0.45,
 			Lacunarity:  2.0,

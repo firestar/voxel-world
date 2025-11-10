@@ -25,9 +25,9 @@ Example `central.yaml`:
 listen_address: 0.0.0.0
 http_port: 28080
 world:
-  chunk_width: 512
-  chunk_depth: 512
-  chunk_height: 2048
+  chunk_width: 256
+  chunk_depth: 256
+  chunk_height: 1024
 cluster:
   default_binary: ../chunk-server/cmd/chunkserver/chunkserver
   data_root: ./data

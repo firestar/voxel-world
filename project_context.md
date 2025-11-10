@@ -2,7 +2,7 @@
 
 ## Overview
 
-The project implements a distributed voxel RTS engine. Chunk servers (Go) own 512×512×2048 voxel chunks, simulate entities, compute pathfinding, and manage block physics. Neighboring servers communicate via UDP handshakes to exchange migration and adjacency information. A central orchestrator (Go) launches and supervises chunk servers, exposes HTTP APIs for lookup, and maintains the world index so player clients can resolve which server covers a given coordinate.
+The project implements a distributed voxel RTS engine. Chunk servers (Go) own 256×256×1024 voxel chunks, simulate entities, compute pathfinding, and manage block physics. Neighboring servers communicate via UDP handshakes to exchange migration and adjacency information. A central orchestrator (Go) launches and supervises chunk servers, exposes HTTP APIs for lookup, and maintains the world index so player clients can resolve which server covers a given coordinate.
 
 ## Key Components
 

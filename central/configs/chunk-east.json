@@ -9,9 +9,9 @@
     "maxConcurrentLoads": 4
   },
   "chunk": {
-    "width": 512,
-    "depth": 512,
-    "height": 2048,
+    "width": 256,
+    "depth": 256,
+    "height": 1024,
     "chunksPerAxis": 32
   },
   "network": {
@@ -36,7 +36,7 @@
   "terrain": {
     "seed": 1337,
     "frequency": 0.003,
-    "amplitude": 512,
+    "amplitude": 384,
     "octaves": 4,
     "persistence": 0.45,
     "lacunarity": 2.0
