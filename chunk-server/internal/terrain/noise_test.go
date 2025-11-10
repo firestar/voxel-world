@@ -57,6 +57,25 @@ func TestNoiseGeneratorGenerateLogsProgress(t *testing.T) {
 	}
 }
 
+func TestNoiseGeneratorWorkerCountRespectsConfig(t *testing.T) {
+	gen := NewNoiseGenerator(config.TerrainConfig{Workers: 8}, config.EconomyConfig{})
+	if got := gen.workerCount(32); got != 8 {
+		t.Fatalf("expected worker count to honor configuration, got %d", got)
+	}
+}
+
+func TestNoiseGeneratorWorkerCountLimitsToTotalColumns(t *testing.T) {
+	gen := NewNoiseGenerator(config.TerrainConfig{Workers: 16}, config.EconomyConfig{})
+	if got := gen.workerCount(4); got != 4 {
+		t.Fatalf("expected worker count to be limited by total columns, got %d", got)
+	}
+
+	autoGen := NewNoiseGenerator(config.TerrainConfig{}, config.EconomyConfig{})
+	if got := autoGen.workerCount(1); got != 1 {
+		t.Fatalf("expected automatic worker count to be at least one, got %d", got)
+	}
+}
+
 func TestNoiseGeneratorMineralVeinsSpreadAcrossAxes(t *testing.T) {
 	gen := NewNoiseGenerator(config.TerrainConfig{
 		Seed:        99,

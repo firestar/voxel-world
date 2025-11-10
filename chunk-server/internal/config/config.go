@@ -125,6 +125,7 @@ type TerrainConfig struct {
 	Octaves     int     `json:"octaves"`
 	Persistence float64 `json:"persistence"`
 	Lacunarity  float64 `json:"lacunarity"`
+	Workers     int     `json:"workers"`
 }
 
 type EconomyConfig struct {
@@ -289,6 +290,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Entities.MovementWorkers < 0 {
 		return errors.New("entities.movementWorkers cannot be negative")
+	}
+	if c.Terrain.Workers < 0 {
+		return errors.New("terrain.workers cannot be negative")
 	}
 	if c.Environment.WeatherMaxDuration > 0 && c.Environment.WeatherMaxDuration < c.Environment.WeatherMinDuration {
 		return errors.New("environment.weatherMaxDuration must be >= weatherMinDuration")

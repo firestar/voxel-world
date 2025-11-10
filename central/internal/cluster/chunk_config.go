@@ -62,6 +62,7 @@ type chunkServerTerrainConfig struct {
 	Octaves     int     `json:"octaves" yaml:"octaves"`
 	Persistence float64 `json:"persistence" yaml:"persistence"`
 	Lacunarity  float64 `json:"lacunarity" yaml:"lacunarity"`
+	Workers     int     `json:"workers" yaml:"workers"`
 }
 
 type chunkServerEconomyConfig struct {
@@ -134,6 +135,7 @@ func defaultChunkServerConfig() chunkServerConfig {
 			Octaves:     4,
 			Persistence: 0.45,
 			Lacunarity:  2.0,
+			Workers:     0,
 		},
 		Economy: chunkServerEconomyConfig{
 			ResourceSpawnDensity: map[string]float64{
