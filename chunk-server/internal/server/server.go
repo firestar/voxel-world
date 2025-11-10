@@ -675,9 +675,15 @@ func (s *Server) queueVoxelDeltas(summary *world.DamageSummary) {
 	}
 
 	region := s.world.Region()
+	chunkCache := make(map[world.ChunkCoord]*world.Chunk)
+	failedChunks := make(map[world.ChunkCoord]struct{})
+
 	for _, change := range changes {
 		chunkCoord, ok := region.LocateBlock(change.Coord)
 		if !ok {
+			continue
+		}
+		if !s.shouldStreamChange(region, change, chunkCache, failedChunks) {
 			continue
 		}
 		if s.deltaBuffer == nil {
@@ -685,6 +691,73 @@ func (s *Server) queueVoxelDeltas(summary *world.DamageSummary) {
 		}
 		s.deltaBuffer.add(chunkCoord, change)
 	}
+}
+
+func (s *Server) shouldStreamChange(region world.ServerRegion, change world.BlockChange, cache map[world.ChunkCoord]*world.Chunk, failed map[world.ChunkCoord]struct{}) bool {
+	if change.After.Type == world.BlockAir {
+		return true
+	}
+	return s.blockAdjacentToAir(region, change.Coord, cache, failed)
+}
+
+var blockNeighborOffsets = [...]struct{ dx, dy, dz int }{
+	{1, 0, 0},
+	{-1, 0, 0},
+	{0, 1, 0},
+	{0, -1, 0},
+	{0, 0, 1},
+	{0, 0, -1},
+}
+
+func (s *Server) blockAdjacentToAir(region world.ServerRegion, coord world.BlockCoord, cache map[world.ChunkCoord]*world.Chunk, failed map[world.ChunkCoord]struct{}) bool {
+	for _, offset := range blockNeighborOffsets {
+		neighbor := world.BlockCoord{
+			X: coord.X + offset.dx,
+			Y: coord.Y + offset.dy,
+			Z: coord.Z + offset.dz,
+		}
+		if neighbor.Z < 0 || neighbor.Z >= region.ChunkDimension.Height {
+			return true
+		}
+		block, ok := s.lookupBlock(region, neighbor, cache, failed)
+		if !ok {
+			return true
+		}
+		if block.Type == "" || block.Type == world.BlockAir {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) lookupBlock(region world.ServerRegion, coord world.BlockCoord, cache map[world.ChunkCoord]*world.Chunk, failed map[world.ChunkCoord]struct{}) (world.Block, bool) {
+	chunkCoord, ok := region.LocateBlock(coord)
+	if !ok {
+		return world.Block{Type: world.BlockAir}, true
+	}
+	if _, seen := failed[chunkCoord]; seen {
+		return world.Block{}, false
+	}
+	chunk, ok := cache[chunkCoord]
+	if !ok {
+		var err error
+		chunk, err = s.world.Chunk(context.Background(), chunkCoord)
+		if err != nil {
+			s.logger.Printf("adjacency chunk load %v: %v", chunkCoord, err)
+			failed[chunkCoord] = struct{}{}
+			return world.Block{}, false
+		}
+		cache[chunkCoord] = chunk
+	}
+	localX, localY, localZ, ok := chunk.GlobalToLocal(coord)
+	if !ok {
+		return world.Block{Type: world.BlockAir}, true
+	}
+	block, ok := chunk.LocalBlock(localX, localY, localZ)
+	if !ok {
+		return world.Block{Type: world.BlockAir}, true
+	}
+	return block, true
 }
 
 func (s *Server) flushVoxelDeltas() {
