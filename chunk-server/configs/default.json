@@ -11,7 +11,7 @@
   "chunk": {
     "width": 256,
     "depth": 256,
-    "height": 1024,
+    "height": 96,
     "chunksPerAxis": 32
   },
   "network": {
@@ -34,10 +34,13 @@
   "terrain": {
     "seed": 1337,
     "frequency": 0.003,
-    "amplitude": 384,
+    "amplitude": 0,
     "octaves": 4,
     "persistence": 0.45,
-    "lacunarity": 2.0
+    "lacunarity": 2.0,
+    "surfaceRatio": 0.75,
+    "amplitudeRatio": 0.22,
+    "undergroundRatio": 0.6
   },
   "economy": {
     "resourceSpawnDensity": {

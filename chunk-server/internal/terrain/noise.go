@@ -17,21 +17,22 @@ import (
 
 // NoiseGenerator creates repeatable terrain using hashed value noise.
 type NoiseGenerator struct {
-	cfg            config.TerrainConfig
-	economy        config.EconomyConfig
-	seed           int64
-	surface        int
-	undergroundCap int
-	randPool       sync.Pool
+	cfg                     config.TerrainConfig
+	economy                 config.EconomyConfig
+	seed                    int64
+	randPool                sync.Pool
+	topsoilSurfacePrototype world.Block
+	topsoilPrototype        world.Block
+	subsoilPrototype        world.Block
+	stonePrototype          world.Block
+	deepstonePrototype      world.Block
 }
 
 func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *NoiseGenerator {
-	return &NoiseGenerator{
-		cfg:            cfg,
-		economy:        economy,
-		seed:           cfg.Seed,
-		surface:        768,
-		undergroundCap: 640,
+	generator := &NoiseGenerator{
+		cfg:     cfg,
+		economy: economy,
+		seed:    cfg.Seed,
 		randPool: sync.Pool{
 			New: func() any {
 				// Seed with time for uniqueness but override deterministically per use.
@@ -39,6 +40,94 @@ func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *
 			},
 		},
 	}
+	generator.initPrototypes()
+	return generator
+}
+
+func (g *NoiseGenerator) initPrototypes() {
+	topsoilSurface := world.Block{
+		Type:            world.BlockSolid,
+		HitPoints:       90,
+		MaxHitPoints:    90,
+		ConnectingForce: 70,
+		Weight:          6,
+	}
+	world.ApplyAppearance(&topsoilSurface, world.MaterialGrass)
+	g.topsoilSurfacePrototype = topsoilSurface
+
+	topsoil := world.Block{
+		Type:            world.BlockSolid,
+		HitPoints:       90,
+		MaxHitPoints:    90,
+		ConnectingForce: 70,
+		Weight:          6,
+	}
+	world.ApplyAppearance(&topsoil, world.MaterialDirt)
+	g.topsoilPrototype = topsoil
+
+	subsoil := world.Block{
+		Type:            world.BlockSolid,
+		HitPoints:       130,
+		MaxHitPoints:    130,
+		ConnectingForce: 95,
+		Weight:          9,
+	}
+	world.ApplyAppearance(&subsoil, world.MaterialDirt)
+	g.subsoilPrototype = subsoil
+
+	g.stonePrototype = world.Block{
+		Type:            world.BlockSolid,
+		HitPoints:       190,
+		MaxHitPoints:    190,
+		ConnectingForce: 150,
+		Weight:          14,
+	}
+
+	g.deepstonePrototype = world.Block{
+		Type:            world.BlockSolid,
+		HitPoints:       240,
+		MaxHitPoints:    240,
+		ConnectingForce: 210,
+		Weight:          18,
+	}
+}
+
+func (g *NoiseGenerator) surfaceLevel(bounds world.Bounds, dim world.Dimensions) int {
+	ratio := g.cfg.SurfaceRatio
+	if ratio <= 0 || ratio >= 1 {
+		ratio = 0.75
+	}
+	height := dim.Height - 1
+	if height < 0 {
+		height = 0
+	}
+	base := bounds.Min.Z + int(float64(height)*ratio)
+	if base > bounds.Max.Z {
+		return bounds.Max.Z
+	}
+	return base
+}
+
+func (g *NoiseGenerator) surfaceAmplitude(dim world.Dimensions) float64 {
+	if g.cfg.AmplitudeRatio > 0 {
+		return float64(dim.Height) * g.cfg.AmplitudeRatio
+	}
+	if g.cfg.Amplitude > 0 {
+		return g.cfg.Amplitude
+	}
+	return float64(dim.Height) * 0.25
+}
+
+func (g *NoiseGenerator) undergroundLimit(bounds world.Bounds, dim world.Dimensions) int {
+	ratio := g.cfg.UndergroundRatio
+	if ratio <= 0 || ratio >= 1 {
+		ratio = 0.6
+	}
+	limit := bounds.Min.Z + int(float64(dim.Height)*ratio)
+	if limit > bounds.Max.Z {
+		return bounds.Max.Z
+	}
+	return limit
 }
 
 func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, bounds world.Bounds, dim world.Dimensions) (*world.Chunk, error) {
@@ -56,6 +145,10 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 	defer cancel()
 
 	buffer := newChunkWriteBuffer(chunk, dim, 1<<28)
+
+	surfaceBase := g.surfaceLevel(bounds, dim)
+	amplitude := g.surfaceAmplitude(dim)
+	undergroundCap := g.undergroundLimit(bounds, dim)
 
 	type columnTask struct {
 		localX int
@@ -95,10 +188,10 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 				globalY := bounds.Min.Y + task.localY
 				noise := g.fractalNoise(float64(globalX), float64(globalY))
 
-				surfaceHeight := g.computeSurfaceHeight(noise)
+				surfaceHeight := int(float64(surfaceBase) + noise*amplitude)
 				surfaceHeight = clampInt(surfaceHeight, bounds.Min.Z, bounds.Max.Z)
 
-				column := g.populateColumn(bounds, dim, task.localX, task.localY, surfaceHeight, noise)
+				column := g.populateColumn(bounds, dim, task.localX, task.localY, surfaceHeight, noise, undergroundCap)
 
 				select {
 				case results <- columnResult{localX: task.localX, localY: task.localY, column: column}:
@@ -179,7 +272,7 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 	return chunk, nil
 }
 
-func (g *NoiseGenerator) populateColumn(bounds world.Bounds, dim world.Dimensions, localX, localY int, surfaceHeight int, noise float64) []world.Block {
+func (g *NoiseGenerator) populateColumn(bounds world.Bounds, dim world.Dimensions, localX, localY int, surfaceHeight int, noise float64, undergroundCap int) []world.Block {
 	maxLocalZ := surfaceHeight - bounds.Min.Z
 	if maxLocalZ >= dim.Height {
 		maxLocalZ = dim.Height - 1
@@ -191,96 +284,67 @@ func (g *NoiseGenerator) populateColumn(bounds world.Bounds, dim world.Dimension
 	globalX := bounds.Min.X + localX
 	globalY := bounds.Min.Y + localY
 
-	column := make([]world.Block, maxLocalZ+1)
-	for localZ := 0; localZ <= maxLocalZ; localZ++ {
-		globalZ := bounds.Min.Z + localZ
-		column[localZ] = g.composeTerrainBlock(globalX, globalY, globalZ, surfaceHeight, noise)
-	}
-	return column
-}
+	totalHeight := maxLocalZ + 1
+	column := make([]world.Block, totalHeight)
+	fillBlockRange(column, 0, totalHeight-1, g.deepstonePrototype)
 
-func (g *NoiseGenerator) composeTerrainBlock(globalX, globalY, globalZ int, surfaceHeight int, noise float64) world.Block {
-	depth := surfaceHeight - globalZ
-	if depth < 0 {
-		depth = 0
+	topsoilStart := maxLocalZ - 2
+	if topsoilStart < 0 {
+		topsoilStart = 0
 	}
-
-	block := world.Block{
-		Type:            world.BlockSolid,
-		HitPoints:       160,
-		MaxHitPoints:    160,
-		ConnectingForce: 120,
-		Weight:          12,
-		Metadata:        make(map[string]any),
+	subsoilStart := maxLocalZ - 12
+	if subsoilStart < 0 {
+		subsoilStart = 0
+	}
+	stoneStart := maxLocalZ - 64
+	if stoneStart < 0 {
+		stoneStart = 0
 	}
 
-	switch {
-	case depth <= 2:
-		block.HitPoints = 90
-		block.MaxHitPoints = 90
-		block.ConnectingForce = 70
-		block.Weight = 6
-		block.Metadata["layer"] = "topsoil"
-		if depth == 0 {
-			world.ApplyAppearance(&block, world.MaterialGrass)
-		} else {
-			world.ApplyAppearance(&block, world.MaterialDirt)
+	stoneEnd := subsoilStart - 1
+	if stoneEnd >= stoneStart {
+		if stoneEnd >= totalHeight {
+			stoneEnd = totalHeight - 1
 		}
-	case depth <= 12:
-		block.HitPoints = 130
-		block.MaxHitPoints = 130
-		block.ConnectingForce = 95
-		block.Weight = 9
-		block.Metadata["layer"] = "subsoil"
-		world.ApplyAppearance(&block, world.MaterialDirt)
-	case depth <= 64:
-		block.HitPoints = 190
-		block.MaxHitPoints = 190
-		block.ConnectingForce = 150
-		block.Weight = 14
-		block.Metadata["layer"] = "stone"
-	default:
-		block.HitPoints = 240
-		block.MaxHitPoints = 240
-		block.ConnectingForce = 210
-		block.Weight = 18
-		block.Metadata["layer"] = "deepstone"
+		fillBlockRange(column, stoneStart, stoneEnd, g.stonePrototype)
 	}
 
-	if globalZ < g.undergroundCap/4 {
-		block.ConnectingForce += 40
-		block.Weight += 2
+	subsoilEnd := topsoilStart - 1
+	if subsoilEnd >= subsoilStart {
+		if subsoilEnd >= totalHeight {
+			subsoilEnd = totalHeight - 1
+		}
+		for idx := subsoilStart; idx <= subsoilEnd; idx++ {
+			block := g.subsoilPrototype
+			block.Metadata = map[string]any{"layer": "subsoil"}
+			column[idx] = block
+		}
 	}
 
-	g.applyUnstableVariation(&block, globalX, globalY, globalZ, depth, noise)
-	return block
-}
-
-func (g *NoiseGenerator) applyUnstableVariation(block *world.Block, globalX, globalY, globalZ, depth int, noise float64) {
-	if depth < 6 {
-		return
+	for idx := topsoilStart; idx < totalHeight; idx++ {
+		depth := maxLocalZ - idx
+		var block world.Block
+		if depth == 0 {
+			block = g.topsoilSurfacePrototype
+		} else {
+			block = g.topsoilPrototype
+		}
+		block.Metadata = map[string]any{"layer": "topsoil"}
+		column[idx] = block
 	}
 
-	hashVal := hash3(globalX+depth, globalY-depth, int(g.seed)+globalZ)
-	probability := float64(hashVal&0xFFFF) / 0xFFFF
-	noiseBias := (noise + 1) * 0.5
-	threshold := 0.05 + 0.15*noiseBias
-
-	if probability > threshold {
-		return
+	globalZ := bounds.Min.Z
+	for idx := 0; idx < totalHeight; idx++ {
+		block := &column[idx]
+		if globalZ < undergroundCap {
+			block.ConnectingForce += 40
+			block.Weight += 2
+		}
+		globalZ++
 	}
 
-	block.Type = world.BlockUnstable
-	block.ConnectingForce *= 0.45
-	block.HitPoints *= 0.8
-	block.MaxHitPoints = block.HitPoints
-	block.Weight *= 0.92
-	block.Metadata["unstable"] = true
-	block.Metadata["stabilityPenalty"] = probability
-}
-
-func (g *NoiseGenerator) computeSurfaceHeight(noise float64) int {
-	return int(float64(g.surface) + noise*g.cfg.Amplitude)
+	g.applyColumnInstability(column, maxLocalZ, globalX, globalY, noise)
+	return column
 }
 
 func (g *NoiseGenerator) seedMineralVeins(buffer *chunkWriteBuffer, bounds world.Bounds, dim world.Dimensions) error {
@@ -297,7 +361,6 @@ func (g *NoiseGenerator) seedMineralVeins(buffer *chunkWriteBuffer, bounds world
 			continue
 		}
 
-		visited := make(map[veinCoord]struct{})
 		for localX := 0; localX < dim.Width; localX++ {
 			for localY := 0; localY < dim.Depth; localY++ {
 				column, ok := buffer.column(localX, localY)
@@ -314,18 +377,12 @@ func (g *NoiseGenerator) seedMineralVeins(buffer *chunkWriteBuffer, bounds world
 				}
 
 				rng := g.random(hashVal)
-				startZ := rng.Intn(len(column))
-				start := veinCoord{X: localX, Y: localY, Z: startZ}
-				if _, already := visited[start]; already {
-					g.releaseRandom(rng)
-					continue
+				placements := veinSizeForDensity(density, rng)
+				if placements > len(column) {
+					placements = len(column)
 				}
-
-				placed := g.growMineralVein(buffer, dim, mineral, density, rng, start, visited)
+				g.scatterMinerals(buffer, column, localX, localY, mineral, placements, rng)
 				g.releaseRandom(rng)
-				if placed == 0 {
-					continue
-				}
 			}
 		}
 	}
@@ -334,50 +391,31 @@ func (g *NoiseGenerator) seedMineralVeins(buffer *chunkWriteBuffer, bounds world
 	return nil
 }
 
-func (g *NoiseGenerator) growMineralVein(buffer *chunkWriteBuffer, dim world.Dimensions, mineral string, density float64, rng *rand.Rand, start veinCoord, visited map[veinCoord]struct{}) int {
-	queue := []veinCoord{start}
+func (g *NoiseGenerator) scatterMinerals(buffer *chunkWriteBuffer, column []world.Block, localX, localY int, mineral string, placements int, rng *rand.Rand) {
+	if placements <= 0 {
+		return
+	}
+	used := make(map[int]struct{}, placements)
 	placed := 0
-	target := veinSizeForDensity(density, rng)
-	diagonalPlaced := false
+	attempts := 0
+	maxAttempts := placements * 6
 
-	for len(queue) > 0 && placed < target {
-		current := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-
-		if _, seen := visited[current]; seen {
+	for placed < placements && attempts < maxAttempts {
+		attempts++
+		target := rng.Intn(len(column))
+		if _, ok := used[target]; ok {
 			continue
 		}
-		visited[current] = struct{}{}
-
-		if current.X < 0 || current.Y < 0 || current.Z < 0 ||
-			current.X >= dim.Width || current.Y >= dim.Depth || current.Z >= dim.Height {
+		if !g.applyMineralToBlock(column, target, mineral) {
 			continue
 		}
-
-		column, ok := buffer.column(current.X, current.Y)
-		if !ok || current.Z >= len(column) {
-			continue
-		}
-
-		if !g.applyMineralToBlock(column, current.Z, mineral) {
-			continue
-		}
-
-		buffer.setColumn(current.X, current.Y, column)
+		used[target] = struct{}{}
 		placed++
-
-		g.enqueueHorizontalNeighbor(&queue, current, dim, rng)
-		g.enqueueVerticalNeighbors(&queue, current, dim, rng)
-		g.enqueueDiagonalNeighbors(&queue, current, dim, rng)
-
-		if !diagonalPlaced && placed >= 2 {
-			if g.forceDiagonalNeighbor(&queue, current, dim, rng) {
-				diagonalPlaced = true
-			}
-		}
 	}
 
-	return placed
+	if placed > 0 {
+		buffer.setColumn(localX, localY, column)
+	}
 }
 
 func veinSizeForDensity(density float64, rng *rand.Rand) int {
@@ -429,64 +467,6 @@ func (g *NoiseGenerator) applyMineralToBlock(column []world.Block, localZ int, m
 	return true
 }
 
-func (g *NoiseGenerator) enqueueHorizontalNeighbor(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) {
-	horizontalOffsets := [...]veinCoord{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}}
-	chosen := horizontalOffsets[rng.Intn(len(horizontalOffsets))]
-	g.tryEnqueue(queue, current, chosen, dim)
-	for _, off := range horizontalOffsets {
-		if rng.Float64() < 0.55 {
-			g.tryEnqueue(queue, current, off, dim)
-		}
-	}
-}
-
-func (g *NoiseGenerator) enqueueVerticalNeighbors(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) {
-	verticalOffsets := [...]veinCoord{{0, 0, 1}, {0, 0, -1}}
-	for _, off := range verticalOffsets {
-		if rng.Float64() < 0.65 {
-			g.tryEnqueue(queue, current, off, dim)
-		}
-	}
-}
-
-func (g *NoiseGenerator) enqueueDiagonalNeighbors(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) {
-	diagonalOffsets := [...]veinCoord{
-		{1, 1, 0}, {1, -1, 0}, {-1, 1, 0}, {-1, -1, 0},
-		{1, 0, 1}, {-1, 0, 1}, {0, 1, 1}, {0, -1, 1},
-		{1, 0, -1}, {-1, 0, -1}, {0, 1, -1}, {0, -1, -1},
-		{1, 1, 1}, {1, -1, 1}, {-1, 1, 1}, {-1, -1, 1},
-		{1, 1, -1}, {1, -1, -1}, {-1, 1, -1}, {-1, -1, -1},
-	}
-	for _, off := range diagonalOffsets {
-		if rng.Float64() < 0.4 {
-			g.tryEnqueue(queue, current, off, dim)
-		}
-	}
-}
-
-func (g *NoiseGenerator) forceDiagonalNeighbor(queue *[]veinCoord, current veinCoord, dim world.Dimensions, rng *rand.Rand) bool {
-	candidates := []veinCoord{{1, 1, 0}, {1, -1, 0}, {-1, 1, 0}, {-1, -1, 0}, {1, 0, 1}, {-1, 0, 1}, {0, 1, 1}, {0, -1, 1}, {1, 0, -1}, {-1, 0, -1}, {0, 1, -1}, {0, -1, -1}}
-	rng.Shuffle(len(candidates), func(i, j int) {
-		candidates[i], candidates[j] = candidates[j], candidates[i]
-	})
-	for _, off := range candidates {
-		if g.tryEnqueue(queue, current, off, dim) {
-			return true
-		}
-	}
-	return false
-}
-
-func (g *NoiseGenerator) tryEnqueue(queue *[]veinCoord, current veinCoord, offset veinCoord, dim world.Dimensions) bool {
-	next := veinCoord{X: current.X + offset.X, Y: current.Y + offset.Y, Z: current.Z + offset.Z}
-	if next.X < 0 || next.Y < 0 || next.Z < 0 ||
-		next.X >= dim.Width || next.Y >= dim.Depth || next.Z >= dim.Height {
-		return false
-	}
-	*queue = append(*queue, next)
-	return true
-}
-
 func (g *NoiseGenerator) random(seed uint32) *rand.Rand {
 	r := g.randPool.Get().(*rand.Rand)
 	r.Seed(int64(seed)<<1 | 1)
@@ -506,12 +486,6 @@ type chunkWriteBuffer struct {
 	threshold  int64
 	columns    map[int][]world.Block
 	usageBytes int64
-}
-
-type veinCoord struct {
-	X int
-	Y int
-	Z int
 }
 
 func newChunkWriteBuffer(chunk *world.Chunk, dim world.Dimensions, threshold int64) *chunkWriteBuffer {
@@ -592,6 +566,110 @@ func columnMemory(column []world.Block) int64 {
 	}
 	blockSize := int64(unsafe.Sizeof(world.Block{}))
 	return int64(len(column)) * blockSize
+}
+
+func fillBlockRange(column []world.Block, start, end int, value world.Block) {
+	if len(column) == 0 {
+		return
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(column) {
+		end = len(column) - 1
+	}
+	if start > end {
+		return
+	}
+	column[start] = value
+	filled := 1
+	remaining := end - start + 1
+	for filled < remaining {
+		copyLen := filled
+		if copyLen > remaining-filled {
+			copyLen = remaining - filled
+		}
+		copy(column[start+filled:], column[start:start+copyLen])
+		filled += copyLen
+	}
+}
+
+func (g *NoiseGenerator) applyColumnInstability(column []world.Block, maxLocalZ int, globalX, globalY int, noise float64) {
+	rangeSize := maxLocalZ - 5
+	if rangeSize <= 0 {
+		return
+	}
+
+	noiseBias := (noise + 1) * 0.5
+	threshold := 0.05 + 0.15*noiseBias
+	expected := int(math.Round(float64(rangeSize) * threshold))
+	if expected <= 0 {
+		return
+	}
+	if expected > rangeSize {
+		expected = rangeSize
+	}
+
+	rng := newDeterministicRNG(globalX, globalY, g.seed)
+	selected := make(map[int]struct{}, expected)
+	attempts := 0
+	maxAttempts := rangeSize * 4
+
+	for len(selected) < expected && attempts < maxAttempts {
+		offset := rng.nextInt(rangeSize)
+		attempts++
+		if _, ok := selected[offset]; ok {
+			continue
+		}
+		depth := 6 + offset
+		idx := maxLocalZ - depth
+		if idx < 0 || idx >= len(column) {
+			continue
+		}
+		block := &column[idx]
+		if block.Type == world.BlockAir {
+			continue
+		}
+		selected[offset] = struct{}{}
+
+		block.Type = world.BlockUnstable
+		block.ConnectingForce *= 0.45
+		block.HitPoints *= 0.8
+		block.MaxHitPoints = block.HitPoints
+		block.Weight *= 0.92
+		if block.Metadata == nil {
+			block.Metadata = make(map[string]any, 2)
+		}
+		penalty := threshold * (0.5 + 0.5*(float64(rng.next()&0xFFFF)/0xFFFF))
+		block.Metadata["unstable"] = true
+		block.Metadata["stabilityPenalty"] = penalty
+	}
+}
+
+type deterministicRNG struct {
+	state uint64
+}
+
+func newDeterministicRNG(x, y int, seed int64) *deterministicRNG {
+	state := uint64(uint32(x))<<32 ^ uint64(uint32(y))<<1 ^ uint64(seed)
+	if state == 0 {
+		state = 0x9e3779b97f4a7c15
+	}
+	return &deterministicRNG{state: state}
+}
+
+func (r *deterministicRNG) next() uint64 {
+	r.state ^= r.state << 7
+	r.state ^= r.state >> 9
+	r.state ^= r.state << 8
+	return r.state
+}
+
+func (r *deterministicRNG) nextInt(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return int(r.next() % uint64(n))
 }
 
 func (g *NoiseGenerator) fractalNoise(x, y float64) float64 {
