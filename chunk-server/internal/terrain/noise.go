@@ -26,6 +26,7 @@ type NoiseGenerator struct {
 	subsoilPrototype        world.Block
 	stonePrototype          world.Block
 	deepstonePrototype      world.Block
+	treeVariants            []treeVariant
 }
 
 func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *NoiseGenerator {
@@ -41,6 +42,7 @@ func NewNoiseGenerator(cfg config.TerrainConfig, economy config.EconomyConfig) *
 		},
 	}
 	generator.initPrototypes()
+	generator.initTreeVariants()
 	return generator
 }
 
@@ -255,6 +257,10 @@ func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, b
 				nextLogPercent = ((progress / 10) + 1) * 10
 			}
 		}
+	}
+
+	if err := g.growForests(buffer, bounds, dim); err != nil {
+		return nil, err
 	}
 
 	if err := g.seedMineralVeins(buffer, bounds, dim); err != nil {
