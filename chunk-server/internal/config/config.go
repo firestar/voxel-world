@@ -119,13 +119,16 @@ type PathfindingConfig struct {
 }
 
 type TerrainConfig struct {
-	Seed        int64   `json:"seed"`
-	Frequency   float64 `json:"frequency"`
-	Amplitude   float64 `json:"amplitude"`
-	Octaves     int     `json:"octaves"`
-	Persistence float64 `json:"persistence"`
-	Lacunarity  float64 `json:"lacunarity"`
-	Workers     int     `json:"workers"`
+        Seed        int64   `json:"seed"`
+        Frequency   float64 `json:"frequency"`
+        Amplitude   float64 `json:"amplitude"`
+        Octaves     int     `json:"octaves"`
+        Persistence float64 `json:"persistence"`
+        Lacunarity  float64 `json:"lacunarity"`
+        Workers     int     `json:"workers"`
+        SurfaceRatio     float64 `json:"surfaceRatio"`
+        AmplitudeRatio   float64 `json:"amplitudeRatio"`
+        UndergroundRatio float64 `json:"undergroundRatio"`
 }
 
 type EconomyConfig struct {
@@ -209,12 +212,12 @@ func Default() *Config {
 			EntityStreamRate:   Duration(50 * time.Millisecond),
 			MaxConcurrentLoads: 4,
 		},
-		Chunk: ChunkConfig{
-			Width:         256,
-			Depth:         256,
-			Height:        1024,
-			ChunksPerAxis: 32,
-		},
+                Chunk: ChunkConfig{
+                        Width:         256,
+                        Depth:         256,
+                        Height:        96,
+                        ChunksPerAxis: 32,
+                },
 		Network: NetworkConfig{
 			ListenUDP:            ":19000",
 			MainServerEndpoints:  []string{"127.0.0.1:20000"},
@@ -232,14 +235,17 @@ func Default() *Config {
 			ThrottlePerSecond: 120,
 			QueueTimeout:      Duration(250 * time.Millisecond),
 		},
-		Terrain: TerrainConfig{
-			Seed:        1337,
-			Frequency:   0.003,
-			Amplitude:   384,
-			Octaves:     4,
-			Persistence: 0.45,
-			Lacunarity:  2.0,
-		},
+                Terrain: TerrainConfig{
+                        Seed:             1337,
+                        Frequency:        0.003,
+                        Amplitude:        0,
+                        Octaves:          4,
+                        Persistence:      0.45,
+                        Lacunarity:       2.0,
+                        SurfaceRatio:     0.75,
+                        AmplitudeRatio:   0.22,
+                        UndergroundRatio: 0.6,
+                },
 		Economy: EconomyConfig{
 			ResourceSpawnDensity: map[string]float64{
 				"steel":       0.9,

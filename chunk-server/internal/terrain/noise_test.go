@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"chunkserver/internal/config"
 	"chunkserver/internal/world"
@@ -80,12 +81,15 @@ func TestNoiseGeneratorWorkerCountLimitsToTotalColumns(t *testing.T) {
 
 func TestNoiseGeneratorMineralVeinsSpreadAcrossAxes(t *testing.T) {
 	gen := NewNoiseGenerator(config.TerrainConfig{
-		Seed:        99,
-		Frequency:   0.01,
-		Amplitude:   64,
-		Octaves:     2,
-		Persistence: 0.5,
-		Lacunarity:  2,
+		Seed:             99,
+		Frequency:        0.01,
+		Amplitude:        0,
+		Octaves:          2,
+		Persistence:      0.5,
+		Lacunarity:       2,
+		SurfaceRatio:     0.75,
+		AmplitudeRatio:   0.25,
+		UndergroundRatio: 0.6,
 	}, config.EconomyConfig{ResourceSpawnDensity: map[string]float64{"uranium": 1.0}})
 
 	dim := world.Dimensions{Width: 6, Depth: 6, Height: 16}
@@ -147,6 +151,26 @@ func TestNoiseGeneratorMineralVeinsSpreadAcrossAxes(t *testing.T) {
 	}
 	if !diagonal {
 		t.Fatalf("expected mineral veins to include diagonal growth, minerals: %#v", minerals)
+	}
+}
+
+func TestNoiseGeneratorCompletesUnderTenSeconds(t *testing.T) {
+	cfg := config.Default()
+	gen := NewNoiseGenerator(cfg.Terrain, cfg.Economy)
+
+	dim := world.Dimensions{Width: cfg.Chunk.Width, Depth: cfg.Chunk.Depth, Height: cfg.Chunk.Height}
+	bounds := world.Bounds{
+		Min: world.BlockCoord{X: 0, Y: 0, Z: 0},
+		Max: world.BlockCoord{X: dim.Width - 1, Y: dim.Depth - 1, Z: dim.Height - 1},
+	}
+
+	start := time.Now()
+	if _, err := gen.Generate(context.Background(), world.ChunkCoord{X: 0, Y: 0}, bounds, dim); err != nil {
+		t.Fatalf("generate chunk: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 10*time.Second {
+		t.Fatalf("expected generation under 10s, got %v", elapsed)
 	}
 }
 
