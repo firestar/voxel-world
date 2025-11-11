@@ -3,7 +3,9 @@ package world
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
+	"path/filepath"
 	"sync"
 )
 
@@ -168,18 +170,29 @@ func (m *Manager) generateChunk(ctx context.Context, coord ChunkCoord, bounds Bo
 }
 
 func (m *Manager) finishChunkFuture(coord ChunkCoord, chunk *Chunk, genErr error) {
+	var newlyGenerated *Chunk
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if chunk != nil {
 		if existing, ok := m.chunks[coord]; ok {
 			chunk = existing
 		} else {
 			m.chunks[coord] = chunk
+			newlyGenerated = chunk
 		}
 	}
 	if future, ok := m.pending[coord]; ok {
 		delete(m.pending, coord)
 		future.complete(chunk, genErr)
+	}
+	m.mu.Unlock()
+
+	if newlyGenerated != nil {
+		go func(chunkCoord ChunkCoord, ch *Chunk) {
+			if err := SaveChunkPreview(ch, filepath.Join("chunk-preview")); err != nil {
+				log.Printf("chunk %v preview: %v", chunkCoord, err)
+			}
+		}(coord, newlyGenerated)
 	}
 }
 
