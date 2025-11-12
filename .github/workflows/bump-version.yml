@@ -93,14 +93,14 @@ jobs:
 
       - name: Trigger server build and release workflow
         if: steps.commit.outputs.has_changes == 'true'
-        uses: peter-evans/workflow-dispatch@v2
+        uses: peter-evans/workflow-dispatch@v4
         with:
           workflow: build-binaries.yml
           ref: ${{ github.ref }}
 
       - name: Trigger client build and release workflow
         if: steps.commit.outputs.has_changes == 'true'
-        uses: peter-evans/workflow-dispatch@v2
+        uses: peter-evans/workflow-dispatch@v4
         with:
           workflow: build-client.yml
           ref: ${{ github.ref }}
