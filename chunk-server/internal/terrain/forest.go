@@ -73,8 +73,8 @@ func (g *NoiseGenerator) initTreeVariants() {
 
 	rootCommon := world.Block{
 		Type:            world.BlockSolid,
-		HitPoints:       260,
-		MaxHitPoints:    260,
+		HitPoints:       360,
+		MaxHitPoints:    360,
 		ConnectingForce: 220,
 		Weight:          16,
 	}
@@ -492,7 +492,28 @@ func (g *NoiseGenerator) carveEntrance(buffer *chunkWriteBuffer, dim world.Dimen
 
 func (g *NoiseGenerator) buildRoots(buffer *chunkWriteBuffer, dim world.Dimensions, placement treePlacement, baseLocalZ int) {
 	variant := placement.variant
-	surfaceZ := placement.surfaceLocalZ
+	directions := []struct{ dx, dy int }{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}, {1, -1}, {-1, 1}}
+
+	type coord struct{ x, y int }
+	surfaceCache := make(map[coord]int, len(directions)*variant.rootReach)
+	for _, dir := range directions {
+		for step := 1; step <= variant.rootReach; step++ {
+			targetX := placement.localX + dir.dx*step
+			targetY := placement.localY + dir.dy*step
+			if !inColumnBounds(dim, targetX, targetY) {
+				continue
+			}
+			column, ok := buffer.column(targetX, targetY)
+			if !ok || len(column) == 0 {
+				continue
+			}
+			surface := columnSurfaceIndex(column)
+			if surface < 0 {
+				continue
+			}
+			surfaceCache[coord{x: targetX, y: targetY}] = surface
+		}
+	}
 
 	// Buttress stump expansions
 	for level := 0; level < variant.stumpHeight; level++ {
@@ -513,30 +534,39 @@ func (g *NoiseGenerator) buildRoots(buffer *chunkWriteBuffer, dim world.Dimensio
 		}
 	}
 
-	directions := []struct{ dx, dy int }{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}, {1, -1}, {-1, 1}}
 	for _, dir := range directions {
 		for step := 1; step <= variant.rootReach; step++ {
 			targetX := placement.localX + dir.dx*step
 			targetY := placement.localY + dir.dy*step
-			if !inColumnBounds(dim, targetX, targetY) {
+			surface, ok := surfaceCache[coord{x: targetX, y: targetY}]
+			if !ok {
 				continue
 			}
+
 			depth := step / 2
+			if depth < 1 {
+				depth = 1
+			}
 			if depth > variant.rootDepth {
 				depth = variant.rootDepth
 			}
-			targetZ := surfaceZ - depth
-			if targetZ < 0 {
-				targetZ = 0
+
+			bottomZ := surface - depth
+			if bottomZ < 0 {
+				bottomZ = 0
 			}
+
+			topZ := surface - 1
+			if topZ < bottomZ {
+				topZ = bottomZ
+			}
+
 			block := g.blockForPart(variant.rootBlock, variant.name, "root", map[string]any{
 				"reach": step,
 			})
-			setBlock(buffer, dim, targetX, targetY, targetZ, block)
-			if depth > 0 {
-				for fill := targetZ + 1; fill <= surfaceZ; fill++ {
-					setBlock(buffer, dim, targetX, targetY, fill, block)
-				}
+
+			for fill := bottomZ; fill <= topZ; fill++ {
+				setBlock(buffer, dim, targetX, targetY, fill, block)
 			}
 		}
 	}
