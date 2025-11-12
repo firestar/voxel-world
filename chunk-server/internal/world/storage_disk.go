@@ -2,6 +2,7 @@ package world
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
@@ -108,9 +109,19 @@ func (s *diskBlockStorage) partPath(part int) string {
 	return fmt.Sprintf("%s.part%d", s.basePath, part)
 }
 
+func (s *diskBlockStorage) indexPath() string {
+	return fmt.Sprintf("%s.idx", s.basePath)
+}
+
 func (s *diskBlockStorage) loadIndex() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.loadIndexFromFileLocked(); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Printf("chunk storage index fallback to scan: %v", err)
+	}
 
 	s.records = make(map[int]diskRecordMeta)
 	s.lastPart = 0
@@ -140,7 +151,7 @@ func (s *diskBlockStorage) loadIndex() error {
 		s.lastPart = part
 	}
 
-	return nil
+	return s.persistIndexLocked()
 }
 
 func (s *diskBlockStorage) scanPart(f *os.File, part int, header []byte) error {
@@ -219,12 +230,12 @@ func (s *diskBlockStorage) SaveColumn(index int, blocks []Block) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	meta, err := s.appendRecord(header, payload)
+	meta, err := s.appendRecordLocked(header, payload)
 	if err != nil {
 		return err
 	}
 	s.records[index] = meta
-	return nil
+	return s.persistIndexLocked()
 }
 
 func (s *diskBlockStorage) Delete(index int) error {
@@ -236,11 +247,11 @@ func (s *diskBlockStorage) Delete(index int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.appendRecord(header, nil); err != nil {
+	if _, err := s.appendRecordLocked(header, nil); err != nil {
 		return err
 	}
 	delete(s.records, index)
-	return nil
+	return s.persistIndexLocked()
 }
 
 func (s *diskBlockStorage) ForEach(fn func(index int, blocks []Block) bool) error {
@@ -278,7 +289,7 @@ func (s *diskBlockStorage) Close() error {
 	return nil
 }
 
-func (s *diskBlockStorage) appendRecord(header, payload []byte) (diskRecordMeta, error) {
+func (s *diskBlockStorage) appendRecordLocked(header, payload []byte) (diskRecordMeta, error) {
 	entrySize := int64(len(header) + len(payload))
 	if entrySize > maxChunkFileSize {
 		return diskRecordMeta{}, fmt.Errorf("chunk entry size %d exceeds max chunk file size %d", entrySize, maxChunkFileSize)
@@ -323,6 +334,136 @@ func (s *diskBlockStorage) appendRecord(header, payload []byte) (diskRecordMeta,
 	}
 }
 
+const (
+	chunkIndexFileVersion = 1
+)
+
+func (s *diskBlockStorage) loadIndexFromFileLocked() error {
+	f, err := os.Open(s.indexPath())
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var version uint32
+	if err := binary.Read(f, binary.LittleEndian, &version); err != nil {
+		return fmt.Errorf("read index version: %w", err)
+	}
+	if version != chunkIndexFileVersion {
+		return fmt.Errorf("unsupported index version %d", version)
+	}
+
+	var count uint32
+	if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+		return fmt.Errorf("read index count: %w", err)
+	}
+
+	s.records = make(map[int]diskRecordMeta, count)
+	s.lastPart = 0
+
+	for i := uint32(0); i < count; i++ {
+		var index uint32
+		var part uint32
+		var offset uint64
+		var size uint32
+
+		if err := binary.Read(f, binary.LittleEndian, &index); err != nil {
+			return fmt.Errorf("read index entry %d key: %w", i, err)
+		}
+		if err := binary.Read(f, binary.LittleEndian, &part); err != nil {
+			return fmt.Errorf("read index entry %d part: %w", i, err)
+		}
+		if err := binary.Read(f, binary.LittleEndian, &offset); err != nil {
+			return fmt.Errorf("read index entry %d offset: %w", i, err)
+		}
+		if err := binary.Read(f, binary.LittleEndian, &size); err != nil {
+			return fmt.Errorf("read index entry %d size: %w", i, err)
+		}
+
+		meta := diskRecordMeta{part: int(part), offset: int64(offset), size: size}
+		s.records[int(index)] = meta
+		if meta.part > s.lastPart {
+			s.lastPart = meta.part
+		}
+	}
+
+	return nil
+}
+
+func (s *diskBlockStorage) persistIndexLocked() error {
+	path := s.indexPath()
+	tmp := path + ".tmp"
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create index directory: %w", err)
+	}
+
+	f, err := os.Create(tmp)
+	if err != nil {
+		return fmt.Errorf("create index file: %w", err)
+	}
+
+	writeErr := func(err error) error {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+
+	if err := binary.Write(f, binary.LittleEndian, uint32(chunkIndexFileVersion)); err != nil {
+		return writeErr(fmt.Errorf("write index version: %w", err))
+	}
+
+	count := uint32(len(s.records))
+	if err := binary.Write(f, binary.LittleEndian, count); err != nil {
+		return writeErr(fmt.Errorf("write index count: %w", err))
+	}
+
+	if count > 0 {
+		entries := make([]struct {
+			index uint32
+			meta  diskRecordMeta
+		}, 0, count)
+		for idx, meta := range s.records {
+			entries = append(entries, struct {
+				index uint32
+				meta  diskRecordMeta
+			}{index: uint32(idx), meta: meta})
+		}
+
+		sort.Slice(entries, func(i, j int) bool { return entries[i].index < entries[j].index })
+
+		for _, entry := range entries {
+			if err := binary.Write(f, binary.LittleEndian, entry.index); err != nil {
+				return writeErr(fmt.Errorf("write index key: %w", err))
+			}
+			if err := binary.Write(f, binary.LittleEndian, uint32(entry.meta.part)); err != nil {
+				return writeErr(fmt.Errorf("write index part: %w", err))
+			}
+			if err := binary.Write(f, binary.LittleEndian, uint64(entry.meta.offset)); err != nil {
+				return writeErr(fmt.Errorf("write index offset: %w", err))
+			}
+			if err := binary.Write(f, binary.LittleEndian, uint32(entry.meta.size)); err != nil {
+				return writeErr(fmt.Errorf("write index size: %w", err))
+			}
+		}
+	}
+
+	if err := f.Sync(); err != nil {
+		return writeErr(fmt.Errorf("sync index file: %w", err))
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("close index file: %w", err)
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("replace index file: %w", err)
+	}
+
+	return nil
+}
+
 type columnRun struct {
 	Count int
 	Block Block
@@ -337,16 +478,32 @@ func encodeColumnPayload(blocks []Block) ([]byte, error) {
 	encoding := columnEncoding{Version: columnEncodingVersion}
 	encoding.Runs = compressColumn(blocks)
 
-	var payload bytes.Buffer
-	if err := gob.NewEncoder(&payload).Encode(&encoding); err != nil {
+	var encoded bytes.Buffer
+	if err := gob.NewEncoder(&encoded).Encode(&encoding); err != nil {
 		return nil, err
 	}
-	return payload.Bytes(), nil
+
+	compressed, err := compressColumnPayload(encoded.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	if len(compressed) > 0 && len(compressed) < encoded.Len() {
+		return compressed, nil
+	}
+
+	return encoded.Bytes(), nil
 }
 
 func decodeColumnPayload(payload []byte) ([]Block, error) {
 	if len(payload) == 0 {
 		return nil, nil
+	}
+
+	if blocks, err := decodeCompressedColumnPayload(payload); err == nil {
+		return blocks, nil
+	} else if err != errNotCompressed {
+		return nil, err
 	}
 
 	var encoding columnEncoding
@@ -365,6 +522,47 @@ func decodeColumnPayload(payload []byte) ([]Block, error) {
 		return nil, err
 	}
 	return legacy, nil
+}
+
+var errNotCompressed = errors.New("column payload not compressed")
+
+func compressColumnPayload(data []byte) ([]byte, error) {
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(data); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return compressed.Bytes(), nil
+}
+
+func decodeCompressedColumnPayload(payload []byte) ([]Block, error) {
+	zr, err := zlib.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		if errors.Is(err, zlib.ErrHeader) {
+			return nil, errNotCompressed
+		}
+		return nil, err
+	}
+	defer zr.Close()
+
+	decoded, err := io.ReadAll(zr)
+	if err != nil {
+		return nil, err
+	}
+
+	var encoding columnEncoding
+	if err := gob.NewDecoder(bytes.NewReader(decoded)).Decode(&encoding); err != nil {
+		return nil, err
+	}
+	switch encoding.Version {
+	case columnEncodingVersion:
+		return expandColumn(encoding.Runs), nil
+	default:
+		return nil, fmt.Errorf("unsupported column encoding version %d", encoding.Version)
+	}
 }
 
 func compressColumn(blocks []Block) []columnRun {

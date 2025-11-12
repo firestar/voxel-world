@@ -80,6 +80,42 @@ func TestDiskBlockStorageRotatesChunkFiles(t *testing.T) {
 	}
 }
 
+func TestDiskBlockStoragePersistsIndex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunk.bin")
+
+	storage, err := newDiskBlockStorage(path)
+	if err != nil {
+		t.Fatalf("newDiskBlockStorage: %v", err)
+	}
+
+	blocks := []Block{{Type: BlockSolid}}
+	if err := storage.SaveColumn(7, blocks); err != nil {
+		t.Fatalf("SaveColumn: %v", err)
+	}
+
+	if _, err := os.Stat(path + ".idx"); err != nil {
+		t.Fatalf("expected index file to exist: %v", err)
+	}
+
+	reopened, err := newDiskBlockStorage(path)
+	if err != nil {
+		t.Fatalf("reopen storage: %v", err)
+	}
+	defer reopened.Close()
+
+	column, ok, err := reopened.LoadColumn(7)
+	if err != nil {
+		t.Fatalf("LoadColumn: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected column 7 to be present")
+	}
+	if !reflect.DeepEqual(column, blocks) {
+		t.Fatalf("reloaded column mismatch")
+	}
+}
+
 func TestDiskBlockStorageRejectsOversizedEntry(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "chunk.bin")
@@ -116,6 +152,37 @@ func TestCompressColumnReducesRuns(t *testing.T) {
 	}
 	if runs[0].Count != len(blocks) {
 		t.Fatalf("expected run length %d, got %d", len(blocks), runs[0].Count)
+	}
+}
+
+func TestEncodeColumnPayloadCompresses(t *testing.T) {
+	block := Block{Type: BlockSolid, Material: strings.Repeat("stone", 16)}
+	blocks := make([]Block, 128)
+	for i := range blocks {
+		blocks[i] = block
+	}
+
+	payload, err := encodeColumnPayload(blocks)
+	if err != nil {
+		t.Fatalf("encode column: %v", err)
+	}
+
+	var uncompressed bytes.Buffer
+	encoding := columnEncoding{Version: columnEncodingVersion, Runs: compressColumn(blocks)}
+	if err := gob.NewEncoder(&uncompressed).Encode(&encoding); err != nil {
+		t.Fatalf("encode expected: %v", err)
+	}
+
+	if len(payload) >= uncompressed.Len() {
+		t.Fatalf("expected compressed payload smaller than uncompressed (got %d vs %d)", len(payload), uncompressed.Len())
+	}
+
+	decoded, err := decodeColumnPayload(payload)
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, blocks) {
+		t.Fatalf("decoded blocks mismatch")
 	}
 }
 
