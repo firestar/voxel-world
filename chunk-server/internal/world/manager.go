@@ -188,11 +188,9 @@ func (m *Manager) finishChunkFuture(coord ChunkCoord, chunk *Chunk, genErr error
 	m.mu.Unlock()
 
 	if newlyGenerated != nil {
-		go func(chunkCoord ChunkCoord, ch *Chunk) {
-			if err := SaveChunkPreview(ch, filepath.Join("chunk-preview")); err != nil {
-				log.Printf("chunk %v preview: %v", chunkCoord, err)
-			}
-		}(coord, newlyGenerated)
+		if err := SaveChunkPreview(newlyGenerated, filepath.Join("chunk-preview")); err != nil {
+			log.Printf("chunk %v preview: %v", coord, err)
+		}
 	}
 }
 
