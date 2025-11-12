@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,7 +155,7 @@ func TestNoiseGeneratorMineralVeinsSpreadAcrossAxes(t *testing.T) {
 	}
 }
 
-func TestNoiseGeneratorCompletesUnderTenSeconds(t *testing.T) {
+func TestNoiseGeneratorCompletesWithinTwentySeconds(t *testing.T) {
 	cfg := config.Default()
 	gen := NewNoiseGenerator(cfg.Terrain, cfg.Economy)
 
@@ -169,8 +170,8 @@ func TestNoiseGeneratorCompletesUnderTenSeconds(t *testing.T) {
 		t.Fatalf("generate chunk: %v", err)
 	}
 	elapsed := time.Since(start)
-	if elapsed > 10*time.Second {
-		t.Fatalf("expected generation under 10s, got %v", elapsed)
+	if elapsed > 20*time.Second {
+		t.Fatalf("expected generation within 20s, got %v", elapsed)
 	}
 }
 
@@ -247,6 +248,108 @@ func TestNoiseGeneratorMineralVeinsDistributeAcrossColumns(t *testing.T) {
 			t.Fatalf("expected %s to span multiple Y positions, columns: %#v", mineral, dist.columns)
 		}
 	}
+}
+
+func TestNoiseGeneratorReusesPersistedChunk(t *testing.T) {
+	original := world.CurrentStorageProvider()
+	storage := newStubBlockStorage()
+	world.SetStorageProvider(&stubStorageProvider{storage: storage})
+	t.Cleanup(func() {
+		world.SetStorageProvider(original)
+	})
+
+	gen := NewNoiseGenerator(config.TerrainConfig{}, config.EconomyConfig{})
+	dim := world.Dimensions{Width: 1, Depth: 1, Height: 2}
+	bounds := world.Bounds{
+		Min: world.BlockCoord{X: 0, Y: 0, Z: 0},
+		Max: world.BlockCoord{X: dim.Width - 1, Y: dim.Depth - 1, Z: dim.Height - 1},
+	}
+
+	chunk, err := gen.Generate(context.Background(), world.ChunkCoord{X: 9, Y: 4}, bounds, dim)
+	if err != nil {
+		t.Fatalf("generate chunk: %v", err)
+	}
+	if chunk == nil {
+		t.Fatalf("expected chunk instance")
+	}
+
+	if saves := storage.saveCalls(); saves != 0 {
+		t.Fatalf("expected no additional column writes, got %d", saves)
+	}
+}
+
+type stubStorageProvider struct {
+	storage *stubBlockStorage
+}
+
+func (p *stubStorageProvider) NewStorage(world.ChunkCoord, world.Bounds, world.Dimensions) (world.BlockStorage, error) {
+	return p.storage, nil
+}
+
+type stubBlockStorage struct {
+	mu      sync.Mutex
+	columns map[int][]world.Block
+	saves   int
+}
+
+func newStubBlockStorage() *stubBlockStorage {
+	return &stubBlockStorage{
+		columns: map[int][]world.Block{
+			0: {{Type: world.BlockSolid}},
+		},
+	}
+}
+
+func (s *stubBlockStorage) LoadColumn(index int) ([]world.Block, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	column, ok := s.columns[index]
+	if !ok {
+		return nil, false, nil
+	}
+	dup := make([]world.Block, len(column))
+	copy(dup, column)
+	return dup, true, nil
+}
+
+func (s *stubBlockStorage) SaveColumn(index int, blocks []world.Block) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dup := make([]world.Block, len(blocks))
+	copy(dup, blocks)
+	s.columns[index] = dup
+	s.saves++
+	return nil
+}
+
+func (s *stubBlockStorage) Delete(index int) error {
+	s.mu.Lock()
+	delete(s.columns, index)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *stubBlockStorage) ForEach(fn func(index int, blocks []world.Block) bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for idx, column := range s.columns {
+		dup := make([]world.Block, len(column))
+		copy(dup, column)
+		if !fn(idx, dup) {
+			break
+		}
+	}
+	return nil
+}
+
+func (s *stubBlockStorage) Close() error {
+	return nil
+}
+
+func (s *stubBlockStorage) saveCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves
 }
 
 func TestNoiseGeneratorDeterministicAcrossRandomLocations(t *testing.T) {

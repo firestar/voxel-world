@@ -135,6 +135,11 @@ func (g *NoiseGenerator) undergroundLimit(bounds world.Bounds, dim world.Dimensi
 func (g *NoiseGenerator) Generate(ctx context.Context, coord world.ChunkCoord, bounds world.Bounds, dim world.Dimensions) (*world.Chunk, error) {
 	chunk := world.NewChunk(coord, bounds, dim)
 
+	if chunk.HasStoredBlocks() {
+		log.Printf("chunk %v generation progress: 100%% (cached)", coord)
+		return chunk, nil
+	}
+
 	totalColumns := dim.Width * dim.Depth
 	if totalColumns <= 0 {
 		log.Printf("chunk %v generation progress: 100%%", coord)

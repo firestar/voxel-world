@@ -187,6 +187,30 @@ func (c *Chunk) Dimensions() Dimensions {
 	return c.dimension
 }
 
+// HasStoredBlocks reports whether the chunk already has any persisted block data.
+func (c *Chunk) HasStoredBlocks() bool {
+	c.mu.RLock()
+	store := c.store
+	c.mu.RUnlock()
+	if store == nil {
+		return false
+	}
+
+	hasBlocks := false
+	if err := store.ForEach(func(_ int, column []Block) bool {
+		for _, block := range column {
+			if !blockIsAir(block) {
+				hasBlocks = true
+				return false
+			}
+		}
+		return true
+	}); err != nil {
+		log.Printf("chunk %v check stored blocks: %v", c.Key, err)
+	}
+	return hasBlocks
+}
+
 func (c *Chunk) EvaluateColumnStability(localX, localY int) ([]StabilityReport, error) {
 	return evaluateColumnStability(c, localX, localY)
 }

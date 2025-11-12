@@ -34,3 +34,10 @@ func getStorageProvider() StorageProvider {
 	storageMu.RUnlock()
 	return provider
 }
+
+// CurrentStorageProvider returns the storage provider currently in use.
+//
+// It is intended for testing and diagnostics.
+func CurrentStorageProvider() StorageProvider {
+	return getStorageProvider()
+}
