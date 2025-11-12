@@ -1,6 +1,8 @@
 name: Build Desktop Client
 
 on:
+  repository_dispatch:
+    types: [build-release]
   push:
     paths:
       - 'client/**'
