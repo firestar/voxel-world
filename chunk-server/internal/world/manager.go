@@ -24,17 +24,24 @@ type Manager struct {
 
 	pending map[ChunkCoord]*chunkFuture
 
+	generationSlots chan struct{}
+
 	lighting   LightingState
 	lightingMu sync.RWMutex
 }
 
+var saveChunkPreview = SaveChunkPreview
+
 func NewManager(region ServerRegion, generator Generator) *Manager {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
 	return &Manager{
-		region:    region,
-		generator: generator,
-		chunks:    make(map[ChunkCoord]*Chunk),
-		pending:   make(map[ChunkCoord]*chunkFuture),
-		lighting:  DefaultLighting(),
+		region:          region,
+		generator:       generator,
+		chunks:          make(map[ChunkCoord]*Chunk),
+		pending:         make(map[ChunkCoord]*chunkFuture),
+		lighting:        DefaultLighting(),
+		generationSlots: slots,
 	}
 }
 
@@ -161,6 +168,9 @@ func (m *Manager) ensureChunkFuture(ctx context.Context, coord ChunkCoord) (*chu
 }
 
 func (m *Manager) generateChunk(ctx context.Context, coord ChunkCoord, bounds Bounds, future *chunkFuture) {
+	m.acquireGenerationSlot()
+	defer m.releaseGenerationSlot()
+
 	chunk, err := m.generator.Generate(ctx, coord, bounds, m.region.ChunkDimension)
 	if err != nil {
 		m.finishChunkFuture(coord, nil, err)
@@ -188,7 +198,7 @@ func (m *Manager) finishChunkFuture(coord ChunkCoord, chunk *Chunk, genErr error
 	m.mu.Unlock()
 
 	if newlyGenerated != nil {
-		if err := SaveChunkPreview(newlyGenerated, filepath.Join("chunk-preview")); err != nil {
+		if err := saveChunkPreview(newlyGenerated, filepath.Join("chunk-preview")); err != nil {
 			log.Printf("chunk %v preview: %v", coord, err)
 		}
 	}
@@ -199,6 +209,23 @@ func contextWithoutCancel(ctx context.Context) context.Context {
 		return context.Background()
 	}
 	return context.WithoutCancel(ctx)
+}
+
+func (m *Manager) acquireGenerationSlot() {
+	if m.generationSlots == nil {
+		return
+	}
+	<-m.generationSlots
+}
+
+func (m *Manager) releaseGenerationSlot() {
+	if m.generationSlots == nil {
+		return
+	}
+	select {
+	case m.generationSlots <- struct{}{}:
+	default:
+	}
 }
 
 type chunkFuture struct {
